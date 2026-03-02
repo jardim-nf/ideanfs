@@ -111,22 +111,43 @@ export default function EmitirNota() {
     });
   };
 
-  const handleHomologar = async (e) => {
+const handleHomologar = async (e) => {
     e.preventDefault();
     setLoading(true);
 
     try {
-      // Aqui depois nós vamos mapear todos esses novos campos para o Backend
-      console.log('🚀 Dados completos gerados:', formData);
-      alert('Modo completo ativado! Verifique o console com todos os dados.');
+      // Função rápida para transformar "1.500,00" em número de verdade (1500.00)
+      const parseCurrency = (val) => Number(String(val).replace(/\./g, '').replace(',', '.')) || 0;
+
+      // 1. Limpando os dados para enviar um JSON perfeito
+      const dadosLimpos = {
+        ...formData,
+        cpfCnpjTomador: formData.cpfCnpjTomador.replace(/\D/g, ''),
+        cepTomador: formData.cepTomador.replace(/\D/g, ''),
+        valorServico: parseCurrency(formData.valorServico),
+        deducoes: parseCurrency(formData.deducoes),
+        descontoCondicionado: parseCurrency(formData.descontoCondicionado),
+        descontoIncondicionado: parseCurrency(formData.descontoIncondicionado),
+        pis: parseCurrency(formData.pis),
+        cofins: parseCurrency(formData.cofins),
+        inss: parseCurrency(formData.inss),
+        ir: parseCurrency(formData.ir),
+        csll: parseCurrency(formData.csll),
+        aliquotaIss: Number(formData.aliquotaIss)
+      };
+
+      console.log('🚀 Dados limpos enviando pro Backend:', dadosLimpos);
       
-      // Simulação do backend por enquanto
-      // const urlBackend = "https://us-central1-ideanfe.cloudfunctions.net/emitirNotaPlugnotas";
-      // const response = await axios.post(urlBackend, dadosLimpos);
+      // Chamada real para a sua Cloud Function no Firebase!
+      const urlBackend = "https://us-central1-ideanfe.cloudfunctions.net/emitirNotaPlugnotas";
+      const response = await axios.post(urlBackend, dadosLimpos);
+      
+      console.log('✅ SUCESSO DO PLUGNOTAS:', response.data);
+      alert('Nota Completa emitida com sucesso! Verifique o console.');
       
     } catch (error) {
-      console.error('❌ Erro:', error);
-      alert('Erro. Verifique o console.');
+      console.error('❌ Erro na emissão:', error.response ? error.response.data : error);
+      alert('Erro ao emitir a nota. Verifique o console (F12).');
     } finally {
       setLoading(false);
     }
