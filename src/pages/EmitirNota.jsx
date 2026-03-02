@@ -82,8 +82,6 @@ export default function EmitirNota() {
         valorServico: Number(formData.valorServico.replace(/\./g, '').replace(',', '.'))
       };
 
-      // 2. Chamamos o nosso Backend local (Firebase Emulator)
-      // Atenção: Confirme se a porta do seu emulador é a 5001 e o nome do projeto é ideanfe
 const urlBackend = "https://us-central1-ideanfe.cloudfunctions.net/emitirNotaPlugnotas";      
       const response = await axios.post(urlBackend, dadosLimpos);
       
