@@ -84,8 +84,7 @@ export default function EmitirNota() {
 
       // 2. Chamamos o nosso Backend local (Firebase Emulator)
       // Atenção: Confirme se a porta do seu emulador é a 5001 e o nome do projeto é ideanfe
-      const urlBackend = "http://127.0.0.1:5001/ideanfe/us-central1/emitirNotaPlugnotas";
-      
+const urlBackend = "https://us-central1-ideanfe.cloudfunctions.net/emitirNotaPlugnotas";      
       const response = await axios.post(urlBackend, dadosLimpos);
       
       console.log('✅ Retorno do Plugnotas:', response.data);
