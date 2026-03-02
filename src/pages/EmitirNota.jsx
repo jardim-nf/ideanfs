@@ -1,125 +1,119 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import axios from 'axios';
+// Importando o Banco de Dados
+import { collection, getDocs } from 'firebase/firestore';
+import { db } from '../firebaseConfig';
 
 // --- Funções de Máscara ---
 const formatCpfCnpj = (value) => {
   const numericValue = value.replace(/\D/g, '');
-  if (numericValue.length <= 11) {
-    return numericValue
-      .replace(/(\d{3})(\d)/, '$1.$2')
-      .replace(/(\d{3})(\d)/, '$1.$2')
-      .replace(/(\d{3})(\d{1,2})$/, '$1-$2');
-  } else {
-    return numericValue
-      .replace(/(\d{2})(\d)/, '$1.$2')
-      .replace(/(\d{3})(\d)/, '$1.$2')
-      .replace(/(\d{3})(\d)/, '$1/$2')
-      .replace(/(\d{4})(\d{1,2})$/, '$1-$2')
-      .slice(0, 18);
-  }
+  if (numericValue.length <= 11) return numericValue.replace(/(\d{3})(\d{3})(\d{3})(\d{1,2})/, '$1.$2.$3-$4').slice(0, 14);
+  return numericValue.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{1,2})/, '$1.$2.$3/$4-$5').slice(0, 18);
 };
-
 const formatCurrency = (value) => {
   const numericValue = value.replace(/\D/g, '');
   const number = (Number(numericValue) / 100).toFixed(2);
   if (number === '0.00') return '';
   return number.replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.');
 };
-
-const formatCep = (value) => {
-  return value
-    .replace(/\D/g, '')
-    .replace(/(\d{5})(\d)/, '$1-$2')
-    .slice(0, 9);
-};
+const formatCep = (value) => value.replace(/\D/g, '').replace(/(\d{5})(\d)/, '$1-$2').slice(0, 9);
 // --------------------------
 
 export default function EmitirNota() {
+  const [loading, setLoading] = useState(false);
+  
+  // Estados para guardar os dados puxados do Banco
+  const [clientesSalvos, setClientesSalvos] = useState([]);
+  const [produtosSalvos, setProdutosSalvos] = useState([]);
+
   const [formData, setFormData] = useState({
-    // Tomador
-    cpfCnpjTomador: '',
-    razaoSocialTomador: '',
-    emailTomador: '',
-    inscricaoMunicipalTomador: '',
-    // Endereço Tomador
-    cepTomador: '',
-    logradouroTomador: '',
-    numeroTomador: '',
-    bairroTomador: '',
-    cidadeTomador: '',
-    ufTomador: '',
-    // Serviço
-    descricaoServico: '',
-    codigoServico: '',
-    // Valores Principais
-    valorServico: '',
-    deducoes: '',
-    descontoCondicionado: '',
-    descontoIncondicionado: '',
-    // Retenções e ISS
-    aliquotaIss: '',
-    reterIss: false,
-    pis: '',
-    cofins: '',
-    inss: '',
-    ir: '',
-    csll: '',
+    cpfCnpjTomador: '', razaoSocialTomador: '', emailTomador: '', inscricaoMunicipalTomador: '',
+    cepTomador: '', logradouroTomador: '', numeroTomador: '', bairroTomador: '', cidadeTomador: '', ufTomador: '',
+    descricaoServico: '', codigoServico: '', valorServico: '', deducoes: '', descontoCondicionado: '', descontoIncondicionado: '',
+    aliquotaIss: '', reterIss: false, pis: '', cofins: '', inss: '', ir: '', csll: '',
   });
 
-  const [loading, setLoading] = useState(false);
+  // 1. BUSCAR DADOS DO BANCO ASSIM QUE A TELA ABRIR
+  useEffect(() => {
+    const buscarDados = async () => {
+      try {
+        const clientesSnap = await getDocs(collection(db, "clientes"));
+        const prodSnap = await getDocs(collection(db, "produtos"));
+        setClientesSalvos(clientesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        setProdutosSalvos(prodSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      } catch (error) {
+        console.error("Erro ao carregar banco de dados:", error);
+      }
+    };
+    buscarDados();
+  }, []);
 
+  // 2. FUNÇÃO QUE "OUVE" A DIGITAÇÃO
   const handleChange = (e) => {
     let { name, value, type, checked } = e.target;
 
-    if (name === 'cpfCnpjTomador') value = formatCpfCnpj(value);
+    // Se for o CPF/CNPJ, formata e verifica se já existe no banco!
+    if (name === 'cpfCnpjTomador') {
+      value = formatCpfCnpj(value);
+      
+      // MÁGICA 1: Auto-preencher ao digitar o CPF completo
+      const clienteEncontrado = clientesSalvos.find(c => c.cpfCnpj === value);
+      if (clienteEncontrado) {
+        setFormData(prev => ({
+          ...prev,
+          cpfCnpjTomador: value,
+          razaoSocialTomador: clienteEncontrado.razaoSocial,
+          emailTomador: clienteEncontrado.email,
+          inscricaoMunicipalTomador: clienteEncontrado.inscricaoMunicipal || '',
+          cepTomador: clienteEncontrado.cep,
+          logradouroTomador: clienteEncontrado.logradouro,
+          numeroTomador: clienteEncontrado.numero,
+          bairroTomador: clienteEncontrado.bairro,
+          cidadeTomador: clienteEncontrado.cidade,
+          ufTomador: clienteEncontrado.uf,
+        }));
+        return; // Para a execução aqui para não sobrescrever
+      }
+    }
+
     if (name === 'cepTomador') value = formatCep(value);
     if (['valorServico', 'deducoes', 'descontoCondicionado', 'descontoIncondicionado', 'pis', 'cofins', 'inss', 'ir', 'csll'].includes(name)) {
       value = formatCurrency(value);
     }
 
-    setFormData((prev) => ({ 
-      ...prev, 
-      [name]: type === 'checkbox' ? checked : value 
-    }));
+    setFormData((prev) => ({ ...prev, [name]: type === 'checkbox' ? checked : value }));
   };
 
-  const preencherDadosTeste = () => {
-    setFormData({
-      cpfCnpjTomador: '15.062.432/0001-40',
-      razaoSocialTomador: 'Empresa Tomadora Completa LTDA',
-      emailTomador: 'financeiro@tomador.com.br',
-      inscricaoMunicipalTomador: '987654321',
-      cepTomador: '87020-025',
-      logradouroTomador: 'Avenida Brasil',
-      numeroTomador: '1500',
-      bairroTomador: 'Centro',
-      cidadeTomador: 'Maringá',
-      ufTomador: 'PR',
-      descricaoServico: 'Consultoria técnica avançada e desenvolvimento de software sob medida.',
-      codigoServico: '01.01',
-      valorServico: '5.000,00',
-      deducoes: '0,00',
-      descontoCondicionado: '0,00',
-      descontoIncondicionado: '0,00',
-      aliquotaIss: '3.00',
-      reterIss: true,
-      pis: '32,50',
-      cofins: '150,00',
-      inss: '0,00',
-      ir: '75,00',
-      csll: '50,00',
-    });
+  // MÁGICA 2: Preenchimento pelo Menu Dropdown
+  const handleSelecionarClienteRapido = (cpfCnpj) => {
+    const c = clientesSalvos.find(x => x.cpfCnpj === cpfCnpj);
+    if (c) {
+      setFormData(prev => ({
+        ...prev, cpfCnpjTomador: c.cpfCnpj, razaoSocialTomador: c.razaoSocial, emailTomador: c.email,
+        inscricaoMunicipalTomador: c.inscricaoMunicipal || '', cepTomador: c.cep, logradouroTomador: c.logradouro,
+        numeroTomador: c.numero, bairroTomador: c.bairro, cidadeTomador: c.cidade, ufTomador: c.uf,
+      }));
+    }
   };
 
-const handleHomologar = async (e) => {
+  const handleSelecionarProdutoRapido = (idProduto) => {
+    const p = produtosSalvos.find(x => x.id === idProduto);
+    if (p) {
+      setFormData(prev => ({
+        ...prev, descricaoServico: p.descricao, codigoServico: p.codigoServico,
+        valorServico: p.valorPadrao, aliquotaIss: p.aliquotaIss
+      }));
+    }
+  };
+
+  // 3. ENVIO PARA O BACKEND (PLUGNOTAS)
+  const handleHomologar = async (e) => {
     e.preventDefault();
     setLoading(true);
 
     try {
-      // Função rápida para transformar "1.500,00" em número de verdade (1500.00)
       const parseCurrency = (val) => Number(String(val).replace(/\./g, '').replace(',', '.')) || 0;
 
-      // 1. Limpando os dados para enviar um JSON perfeito
       const dadosLimpos = {
         ...formData,
         cpfCnpjTomador: formData.cpfCnpjTomador.replace(/\D/g, ''),
@@ -128,22 +122,16 @@ const handleHomologar = async (e) => {
         deducoes: parseCurrency(formData.deducoes),
         descontoCondicionado: parseCurrency(formData.descontoCondicionado),
         descontoIncondicionado: parseCurrency(formData.descontoIncondicionado),
-        pis: parseCurrency(formData.pis),
-        cofins: parseCurrency(formData.cofins),
-        inss: parseCurrency(formData.inss),
-        ir: parseCurrency(formData.ir),
-        csll: parseCurrency(formData.csll),
+        pis: parseCurrency(formData.pis), cofins: parseCurrency(formData.cofins),
+        inss: parseCurrency(formData.inss), ir: parseCurrency(formData.ir), csll: parseCurrency(formData.csll),
         aliquotaIss: Number(formData.aliquotaIss)
       };
-
-      console.log('🚀 Dados limpos enviando pro Backend:', dadosLimpos);
       
-      // Chamada real para a sua Cloud Function no Firebase!
       const urlBackend = "https://us-central1-ideanfe.cloudfunctions.net/emitirNotaPlugnotas";
       const response = await axios.post(urlBackend, dadosLimpos);
       
-      console.log('✅ SUCESSO DO PLUGNOTAS:', response.data);
       alert('Nota Completa emitida com sucesso! Verifique o console.');
+      console.log('✅ SUCESSO:', response.data);
       
     } catch (error) {
       console.error('❌ Erro na emissão:', error.response ? error.response.data : error);
@@ -157,73 +145,56 @@ const handleHomologar = async (e) => {
     <div className="min-h-screen bg-gray-100 p-8 flex justify-center items-start font-sans">
       <div className="w-full max-w-5xl bg-white rounded-xl shadow-lg border border-gray-200 p-8">
         
-        {/* Cabeçalho */}
-        <div className="mb-8 border-b border-gray-200 pb-4 flex justify-between items-center">
-          <div>
-            <h2 className="text-3xl font-extrabold text-gray-800 tracking-tight">Emissão Completa - NFS-e</h2>
-            <p className="text-gray-500 text-sm mt-1">Preencha todos os dados tributários e de endereço exigidos pela prefeitura.</p>
-          </div>
-          <button type="button" onClick={preencherDadosTeste} className="bg-blue-50 hover:bg-blue-100 text-blue-700 font-semibold py-2 px-4 rounded-lg text-sm transition-colors border border-blue-200 flex items-center gap-2">
-            🧪 Preencher Tudo
-          </button>
+        <div className="mb-8 border-b border-gray-200 pb-4">
+          <h2 className="text-3xl font-extrabold text-gray-800 tracking-tight">Emissão Completa - NFS-e</h2>
+          <p className="text-gray-500 text-sm mt-1">Preencha os dados manualmente ou selecione dos seus cadastros salvos.</p>
         </div>
 
         <form onSubmit={handleHomologar} className="space-y-10">
           
           {/* 1. DADOS DO TOMADOR */}
           <section>
-            <h3 className="text-xl font-bold text-gray-800 mb-4 border-l-4 border-blue-600 pl-3">1. Dados do Cliente (Tomador)</h3>
+            <div className="flex justify-between items-end mb-4">
+              <h3 className="text-xl font-bold text-gray-800 border-l-4 border-blue-600 pl-3">1. Dados do Cliente</h3>
+              
+              {/* SELECT INTELIGENTE DE CLIENTES */}
+              {clientesSalvos.length > 0 && (
+                <div className="w-64">
+                  <select onChange={(e) => handleSelecionarClienteRapido(e.target.value)} className="w-full px-3 py-2 border-2 border-blue-400 bg-blue-50 text-blue-800 rounded-lg focus:ring-2 focus:ring-blue-600 outline-none text-sm font-bold cursor-pointer shadow-sm">
+                    <option value="">⚡ Autopreencher Cliente...</option>
+                    {clientesSalvos.map(c => <option key={c.id} value={c.cpfCnpj}>{c.razaoSocial} ({c.cpfCnpj})</option>)}
+                  </select>
+                </div>
+              )}
+            </div>
+
             <div className="bg-gray-50 p-5 rounded-lg border border-gray-200 grid grid-cols-1 md:grid-cols-4 gap-4">
               <div className="md:col-span-1">
                 <label className="block text-xs font-bold text-gray-700 uppercase mb-1">CPF / CNPJ</label>
                 <input type="text" name="cpfCnpjTomador" value={formData.cpfCnpjTomador} onChange={handleChange} required 
-                  className="w-full px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none text-sm" placeholder="000.000.000-00" maxLength="18" />
+                  className="w-full px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none text-sm" placeholder="Digite para buscar..." maxLength="18" />
               </div>
               <div className="md:col-span-2">
                 <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Razão Social / Nome</label>
-                <input type="text" name="razaoSocialTomador" value={formData.razaoSocialTomador} onChange={handleChange} required 
-                  className="w-full px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none text-sm" placeholder="Nome completo" />
+                <input type="text" name="razaoSocialTomador" value={formData.razaoSocialTomador} onChange={handleChange} required className="w-full px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none text-sm" />
               </div>
               <div className="md:col-span-1">
                 <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Insc. Municipal</label>
-                <input type="text" name="inscricaoMunicipalTomador" value={formData.inscricaoMunicipalTomador} onChange={handleChange} 
-                  className="w-full px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none text-sm" placeholder="Opcional" />
+                <input type="text" name="inscricaoMunicipalTomador" value={formData.inscricaoMunicipalTomador} onChange={handleChange} className="w-full px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none text-sm" />
               </div>
               <div className="md:col-span-4">
                 <label className="block text-xs font-bold text-gray-700 uppercase mb-1">E-mail</label>
-                <input type="email" name="emailTomador" value={formData.emailTomador} onChange={handleChange} 
-                  className="w-full px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none text-sm" placeholder="email@cliente.com" />
+                <input type="email" name="emailTomador" value={formData.emailTomador} onChange={handleChange} className="w-full px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none text-sm" />
               </div>
 
-              {/* Endereço Tomador */}
+              {/* Endereço */}
               <div className="md:col-span-4 mt-2">
-                <h4 className="text-sm font-semibold text-gray-600 mb-3 border-b pb-1">Endereço do Cliente</h4>
                 <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
-                  <div className="md:col-span-1">
-                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">CEP</label>
-                    <input type="text" name="cepTomador" value={formData.cepTomador} onChange={handleChange} 
-                      className="w-full px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none text-sm" placeholder="00000-000" />
-                  </div>
-                  <div className="md:col-span-2">
-                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Logradouro</label>
-                    <input type="text" name="logradouroTomador" value={formData.logradouroTomador} onChange={handleChange} 
-                      className="w-full px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none text-sm" placeholder="Rua, Avenida..." />
-                  </div>
-                  <div className="md:col-span-1">
-                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Número</label>
-                    <input type="text" name="numeroTomador" value={formData.numeroTomador} onChange={handleChange} 
-                      className="w-full px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none text-sm" placeholder="123" />
-                  </div>
-                  <div className="md:col-span-1">
-                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Bairro</label>
-                    <input type="text" name="bairroTomador" value={formData.bairroTomador} onChange={handleChange} 
-                      className="w-full px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none text-sm" />
-                  </div>
-                  <div className="md:col-span-1">
-                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">UF</label>
-                    <input type="text" name="ufTomador" value={formData.ufTomador} onChange={handleChange} maxLength="2"
-                      className="w-full px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none text-sm uppercase" placeholder="SP" />
-                  </div>
+                  <div className="md:col-span-1"><label className="block text-xs font-bold text-gray-700 uppercase mb-1">CEP</label><input type="text" name="cepTomador" value={formData.cepTomador} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
+                  <div className="md:col-span-2"><label className="block text-xs font-bold text-gray-700 uppercase mb-1">Logradouro</label><input type="text" name="logradouroTomador" value={formData.logradouroTomador} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
+                  <div className="md:col-span-1"><label className="block text-xs font-bold text-gray-700 uppercase mb-1">Número</label><input type="text" name="numeroTomador" value={formData.numeroTomador} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
+                  <div className="md:col-span-1"><label className="block text-xs font-bold text-gray-700 uppercase mb-1">Bairro</label><input type="text" name="bairroTomador" value={formData.bairroTomador} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
+                  <div className="md:col-span-1"><label className="block text-xs font-bold text-gray-700 uppercase mb-1">UF</label><input type="text" name="ufTomador" value={formData.ufTomador} onChange={handleChange} maxLength="2" className="w-full px-3 py-2 border rounded text-sm uppercase" /></div>
                 </div>
               </div>
             </div>
@@ -231,97 +202,67 @@ const handleHomologar = async (e) => {
 
           {/* 2. DADOS DO SERVIÇO */}
           <section>
-            <h3 className="text-xl font-bold text-gray-800 mb-4 border-l-4 border-blue-600 pl-3">2. Descrição e Natureza do Serviço</h3>
+            <div className="flex justify-between items-end mb-4">
+              <h3 className="text-xl font-bold text-gray-800 border-l-4 border-blue-600 pl-3">2. Descrição do Serviço</h3>
+              
+              {/* SELECT INTELIGENTE DE PRODUTOS */}
+              {produtosSalvos.length > 0 && (
+                <div className="w-64">
+                  <select onChange={(e) => handleSelecionarProdutoRapido(e.target.value)} className="w-full px-3 py-2 border-2 border-green-400 bg-green-50 text-green-800 rounded-lg focus:ring-2 focus:ring-green-600 outline-none text-sm font-bold cursor-pointer shadow-sm">
+                    <option value="">⚡ Autopreencher Serviço...</option>
+                    {produtosSalvos.map(p => <option key={p.id} value={p.id}>{p.nomeServico} - R$ {p.valorPadrao}</option>)}
+                  </select>
+                </div>
+              )}
+            </div>
+            
             <div className="bg-white p-5 rounded-lg border border-gray-200 grid grid-cols-1 md:grid-cols-4 gap-4 shadow-sm">
               <div className="md:col-span-3">
                 <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Descrição Detalhada do Serviço</label>
-                <textarea name="descricaoServico" value={formData.descricaoServico} onChange={handleChange} required rows="3" 
-                  className="w-full px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none text-sm resize-none" placeholder="Descreva exatamente o que foi prestado..." />
+                <textarea name="descricaoServico" value={formData.descricaoServico} onChange={handleChange} required rows="3" className="w-full px-3 py-2 border rounded text-sm resize-none" />
               </div>
               <div className="md:col-span-1">
                 <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Cód. LC 116 (Serviço)</label>
-                <input type="text" name="codigoServico" value={formData.codigoServico} onChange={handleChange} required 
-                  className="w-full px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none text-sm" placeholder="Ex: 01.01" />
+                <input type="text" name="codigoServico" value={formData.codigoServico} onChange={handleChange} required className="w-full px-3 py-2 border rounded text-sm" />
               </div>
             </div>
           </section>
 
-          {/* 3. VALORES E RETENÇÕES (O CORAÇÃO DA NOTA COMPLETA) */}
+          {/* 3. VALORES */}
           <section>
-            <h3 className="text-xl font-bold text-gray-800 mb-4 border-l-4 border-green-600 pl-3">3. Composição de Valores e Tributos</h3>
+            <h3 className="text-xl font-bold text-gray-800 mb-4 border-l-4 border-green-600 pl-3">3. Valores e Tributos</h3>
             <div className="bg-green-50/50 p-5 rounded-lg border border-green-100 shadow-sm space-y-6">
               
-              {/* Valores Principais */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div>
                   <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Valor do Serviço</label>
-                  <div className="relative">
-                    <span className="absolute left-3 top-2 text-gray-500 text-sm">R$</span>
-                    <input type="text" name="valorServico" value={formData.valorServico} onChange={handleChange} required 
-                      className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-green-500 outline-none text-sm font-semibold" placeholder="0,00" />
-                  </div>
+                  <div className="relative"><span className="absolute left-3 top-2 text-gray-500 text-sm">R$</span><input type="text" name="valorServico" value={formData.valorServico} onChange={handleChange} required className="w-full pl-9 pr-3 py-2 border rounded text-sm font-semibold" /></div>
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Deduções</label>
-                  <div className="relative">
-                    <span className="absolute left-3 top-2 text-gray-500 text-sm">R$</span>
-                    <input type="text" name="deducoes" value={formData.deducoes} onChange={handleChange} 
-                      className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-green-500 outline-none text-sm" placeholder="0,00" />
-                  </div>
+                  <div className="relative"><span className="absolute left-3 top-2 text-gray-500 text-sm">R$</span><input type="text" name="deducoes" value={formData.deducoes} onChange={handleChange} className="w-full pl-9 pr-3 py-2 border rounded text-sm" /></div>
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-gray-700 uppercase mb-1 text-nowrap">Desc. Incondicionado</label>
-                  <div className="relative">
-                    <span className="absolute left-3 top-2 text-gray-500 text-sm">R$</span>
-                    <input type="text" name="descontoIncondicionado" value={formData.descontoIncondicionado} onChange={handleChange} 
-                      className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-green-500 outline-none text-sm" placeholder="0,00" />
-                  </div>
+                  <div className="relative"><span className="absolute left-3 top-2 text-gray-500 text-sm">R$</span><input type="text" name="descontoIncondicionado" value={formData.descontoIncondicionado} onChange={handleChange} className="w-full pl-9 pr-3 py-2 border rounded text-sm" /></div>
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Desc. Condicionado</label>
-                  <div className="relative">
-                    <span className="absolute left-3 top-2 text-gray-500 text-sm">R$</span>
-                    <input type="text" name="descontoCondicionado" value={formData.descontoCondicionado} onChange={handleChange} 
-                      className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-green-500 outline-none text-sm" placeholder="0,00" />
-                  </div>
+                  <div className="relative"><span className="absolute left-3 top-2 text-gray-500 text-sm">R$</span><input type="text" name="descontoCondicionado" value={formData.descontoCondicionado} onChange={handleChange} className="w-full pl-9 pr-3 py-2 border rounded text-sm" /></div>
                 </div>
               </div>
 
-              {/* Retenções e ISS */}
               <div className="pt-4 border-t border-green-200">
-                <h4 className="text-sm font-semibold text-gray-700 mb-3">Impostos e Retenções Federais</h4>
                 <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
-                  <div>
-                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">PIS (R$)</label>
-                    <input type="text" name="pis" value={formData.pis} onChange={handleChange} className="w-full px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-green-500 outline-none text-sm" placeholder="0,00" />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">COFINS (R$)</label>
-                    <input type="text" name="cofins" value={formData.cofins} onChange={handleChange} className="w-full px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-green-500 outline-none text-sm" placeholder="0,00" />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">INSS (R$)</label>
-                    <input type="text" name="inss" value={formData.inss} onChange={handleChange} className="w-full px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-green-500 outline-none text-sm" placeholder="0,00" />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">IR (R$)</label>
-                    <input type="text" name="ir" value={formData.ir} onChange={handleChange} className="w-full px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-green-500 outline-none text-sm" placeholder="0,00" />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">CSLL (R$)</label>
-                    <input type="text" name="csll" value={formData.csll} onChange={handleChange} className="w-full px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-green-500 outline-none text-sm" placeholder="0,00" />
-                  </div>
-                  <div className="bg-gray-800 p-2 rounded-lg text-white">
-                    <label className="block text-xs font-bold text-gray-300 uppercase mb-1">Alíquota ISS (%)</label>
-                    <input type="number" step="0.01" name="aliquotaIss" value={formData.aliquotaIss} onChange={handleChange} required className="w-full px-2 py-1 border-none rounded text-gray-900 focus:ring-2 focus:ring-green-500 outline-none text-sm" placeholder="Ex: 5.00" />
-                  </div>
+                  <div><label className="block text-xs font-bold text-gray-700 uppercase mb-1">PIS</label><input type="text" name="pis" value={formData.pis} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
+                  <div><label className="block text-xs font-bold text-gray-700 uppercase mb-1">COFINS</label><input type="text" name="cofins" value={formData.cofins} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
+                  <div><label className="block text-xs font-bold text-gray-700 uppercase mb-1">INSS</label><input type="text" name="inss" value={formData.inss} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
+                  <div><label className="block text-xs font-bold text-gray-700 uppercase mb-1">IR</label><input type="text" name="ir" value={formData.ir} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
+                  <div><label className="block text-xs font-bold text-gray-700 uppercase mb-1">CSLL</label><input type="text" name="csll" value={formData.csll} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
+                  <div className="bg-gray-800 p-2 rounded-lg text-white"><label className="block text-xs font-bold text-gray-300 uppercase mb-1">Alíquota ISS (%)</label><input type="number" step="0.01" name="aliquotaIss" value={formData.aliquotaIss} onChange={handleChange} required className="w-full px-2 py-1 border-none rounded text-gray-900 text-sm" /></div>
                 </div>
-
                 <div className="mt-4">
-                  <label className="flex items-center gap-3 cursor-pointer bg-white p-3 rounded border border-gray-200 w-max hover:bg-gray-50 transition-colors">
-                    <input type="checkbox" name="reterIss" checked={formData.reterIss} onChange={handleChange} className="w-5 h-5 text-blue-600 rounded border-gray-300 focus:ring-blue-500" />
-                    <span className="text-sm font-bold text-gray-700 uppercase tracking-wide">Imposto Retido (O Tomador paga o ISS)</span>
-                  </label>
+                  <label className="flex items-center gap-3 cursor-pointer bg-white p-3 rounded border w-max"><input type="checkbox" name="reterIss" checked={formData.reterIss} onChange={handleChange} className="w-5 h-5 text-blue-600 rounded" /><span className="text-sm font-bold text-gray-700 uppercase">Imposto Retido (O Tomador paga o ISS)</span></label>
                 </div>
               </div>
 
