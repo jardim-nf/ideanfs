@@ -3,7 +3,8 @@ import Login from './pages/Login';
 import CadastroClientes from './pages/CadastroClientes';
 import CadastroProdutos from './pages/CadastroProdutos';
 import EmitirNota from './pages/EmitirNota';
-import Configuracoes from './pages/Configuracoes'; // <-- Importação da nova tela
+import MinhasNotas from './pages/MinhasNotas'; // <-- NOVA IMPORTAÇÃO
+import Configuracoes from './pages/Configuracoes';
 
 // ==========================================
 // TELA DO DASHBOARD (MENU PRINCIPAL)
@@ -20,7 +21,8 @@ function Dashboard() {
           </button>
         </div>
         
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        {/* Grid ajustado para comportar os 5 botões de forma organizada */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6">
           <button onClick={() => navigate('/clientes')} className="bg-white p-8 rounded-xl shadow border border-gray-200 hover:border-blue-500 hover:shadow-md transition-all font-bold text-lg flex flex-col items-center gap-4 text-center">
             <span className="text-4xl">👥</span>
             Clientes
@@ -31,14 +33,20 @@ function Dashboard() {
             Serviços
           </button>
 
-          <button onClick={() => navigate('/configuracoes')} className="bg-white p-8 rounded-xl shadow border border-purple-200 hover:border-purple-500 hover:shadow-md transition-all font-bold text-lg flex flex-col items-center gap-4 text-center">
-            <span className="text-4xl">⚙️</span>
-            Minha Empresa
-          </button>
-          
           <button onClick={() => navigate('/emitir-nota')} className="bg-white p-8 rounded-xl shadow border border-green-200 hover:border-green-500 hover:shadow-md transition-all font-bold text-lg text-green-700 flex flex-col items-center gap-4 text-center">
             <span className="text-4xl">📄</span>
             Emitir Nota
+          </button>
+
+          {/* <-- NOVO BOTÃO DE HISTÓRICO --> */}
+          <button onClick={() => navigate('/minhas-notas')} className="bg-white p-8 rounded-xl shadow border border-blue-200 hover:border-blue-500 hover:shadow-md transition-all font-bold text-lg text-blue-700 flex flex-col items-center gap-4 text-center">
+            <span className="text-4xl">📋</span>
+            Minhas Notas
+          </button>
+          
+          <button onClick={() => navigate('/configuracoes')} className="bg-white p-8 rounded-xl shadow border border-purple-200 hover:border-purple-500 hover:shadow-md transition-all font-bold text-lg flex flex-col items-center gap-4 text-center">
+            <span className="text-4xl">⚙️</span>
+            Minha Empresa
           </button>
         </div>
       </div>
@@ -58,9 +66,10 @@ export default function App() {
         <Route path="/clientes" element={<CadastroClientes />} />
         <Route path="/produtos" element={<CadastroProdutos />} />
         <Route path="/emitir-nota" element={<EmitirNota />} />
-        
-        {/* <-- ROTA NOVA ADICIONADA AQUI DENTRO DO BLOCO ROUTES --> */}
         <Route path="/configuracoes" element={<Configuracoes />} /> 
+        
+        {/* <-- NOVA ROTA REGISTRADA --> */}
+        <Route path="/minhas-notas" element={<MinhasNotas />} /> 
       </Routes>
     </BrowserRouter>
   );

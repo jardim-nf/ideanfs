@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
+import { useSearchParams, useNavigate } from 'react-router-dom'; // Adicionado useNavigate
 // Importando o Banco de Dados
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebaseConfig';
+import BuscaServico from '../components/BuscaServico';
 
 // --- Funções de Máscara ---
 const formatCpfCnpj = (value) => {
@@ -21,8 +23,10 @@ const formatCep = (value) => value.replace(/\D/g, '').replace(/(\d{5})(\d)/, '$1
 
 export default function EmitirNota() {
   const [loading, setLoading] = useState(false);
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate(); // Para navegar para o histórico após emitir
+  const idReprocessar = searchParams.get('reprocessar'); 
   
-  // Estados para guardar os dados puxados do Banco
   const [clientesSalvos, setClientesSalvos] = useState([]);
   const [produtosSalvos, setProdutosSalvos] = useState([]);
 
@@ -33,30 +37,38 @@ export default function EmitirNota() {
     aliquotaIss: '', reterIss: false, pis: '', cofins: '', inss: '', ir: '', csll: '',
   });
 
-  // 1. BUSCAR DADOS DO BANCO ASSIM QUE A TELA ABRIR
+  // 1. CARREGAR DADOS E NOTA ANTIGA
   useEffect(() => {
-    const buscarDados = async () => {
+    const carregarDadosIniciais = async () => {
       try {
         const clientesSnap = await getDocs(collection(db, "clientes"));
         const prodSnap = await getDocs(collection(db, "produtos"));
         setClientesSalvos(clientesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
         setProdutosSalvos(prodSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+
+        if (idReprocessar) {
+          const docRef = doc(db, "notas_emitidas", idReprocessar);
+          const docSnap = await getDoc(docRef);
+          
+          if (docSnap.exists()) {
+            const dadosHistoricos = docSnap.data().dadosFormulario;
+            // Preenche o formulário com os dados salvos no Firestore
+            setFormData(dadosHistoricos);
+          }
+        }
       } catch (error) {
-        console.error("Erro ao carregar banco de dados:", error);
+        console.error("Erro ao carregar dados:", error);
       }
     };
-    buscarDados();
-  }, []);
+    carregarDadosIniciais();
+  }, [idReprocessar]);
 
-  // 2. FUNÇÃO QUE "OUVE" A DIGITAÇÃO
+  // 2. HANDLERS (Ouvintes de mudança)
   const handleChange = (e) => {
     let { name, value, type, checked } = e.target;
 
-    // Se for o CPF/CNPJ, formata e verifica se já existe no banco!
     if (name === 'cpfCnpjTomador') {
       value = formatCpfCnpj(value);
-      
-      // MÁGICA 1: Auto-preencher ao digitar o CPF completo
       const clienteEncontrado = clientesSalvos.find(c => c.cpfCnpj === value);
       if (clienteEncontrado) {
         setFormData(prev => ({
@@ -72,7 +84,7 @@ export default function EmitirNota() {
           cidadeTomador: clienteEncontrado.cidade,
           ufTomador: clienteEncontrado.uf,
         }));
-        return; // Para a execução aqui para não sobrescrever
+        return;
       }
     }
 
@@ -84,7 +96,6 @@ export default function EmitirNota() {
     setFormData((prev) => ({ ...prev, [name]: type === 'checkbox' ? checked : value }));
   };
 
-  // MÁGICA 2: Preenchimento pelo Menu Dropdown
   const handleSelecionarClienteRapido = (cpfCnpj) => {
     const c = clientesSalvos.find(x => x.cpfCnpj === cpfCnpj);
     if (c) {
@@ -100,13 +111,16 @@ export default function EmitirNota() {
     const p = produtosSalvos.find(x => x.id === idProduto);
     if (p) {
       setFormData(prev => ({
-        ...prev, descricaoServico: p.descricao, codigoServico: p.codigoServico,
-        valorServico: p.valorPadrao, aliquotaIss: p.aliquotaIss
+        ...prev, 
+        descricaoServico: p.descricao || p.nomeServico, 
+        codigoServico: p.codigoServico,
+        valorServico: p.valorPadrao, 
+        aliquotaIss: p.aliquotaIss
       }));
     }
   };
 
-  // 3. ENVIO PARA O BACKEND (PLUGNOTAS)
+  // 3. EMISSÃO FINAL
   const handleHomologar = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -130,12 +144,15 @@ export default function EmitirNota() {
       const urlBackend = "https://us-central1-ideanfe.cloudfunctions.net/emitirNotaPlugnotas";
       const response = await axios.post(urlBackend, dadosLimpos);
       
-      alert('Nota Completa emitida com sucesso! Verifique o console.');
+      alert('Nota enviada para processamento!');
       console.log('✅ SUCESSO:', response.data);
+      
+      // Redireciona para o histórico após o sucesso
+      navigate('/minhas-notas');
       
     } catch (error) {
       console.error('❌ Erro na emissão:', error.response ? error.response.data : error);
-      alert('Erro ao emitir a nota. Verifique o console (F12).');
+      alert('Erro ao emitir a nota. Verifique os dados e tente novamente.');
     } finally {
       setLoading(false);
     }
@@ -146,21 +163,22 @@ export default function EmitirNota() {
       <div className="w-full max-w-5xl bg-white rounded-xl shadow-lg border border-gray-200 p-8">
         
         <div className="mb-8 border-b border-gray-200 pb-4">
-          <h2 className="text-3xl font-extrabold text-gray-800 tracking-tight">Emissão Completa - NFS-e</h2>
-          <p className="text-gray-500 text-sm mt-1">Preencha os dados manualmente ou selecione dos seus cadastros salvos.</p>
+          <h2 className="text-3xl font-extrabold text-gray-800 tracking-tight">
+            {idReprocessar ? 'Recuperação de Nota' : 'Emissão Completa - NFS-e'}
+          </h2>
+          <p className="text-gray-500 text-sm mt-1">
+            {idReprocessar ? `Corrigindo a nota: ${idReprocessar}` : 'Preencha os dados ou selecione dos seus cadastros.'}
+          </p>
         </div>
 
         <form onSubmit={handleHomologar} className="space-y-10">
           
-          {/* 1. DADOS DO TOMADOR */}
           <section>
             <div className="flex justify-between items-end mb-4">
               <h3 className="text-xl font-bold text-gray-800 border-l-4 border-blue-600 pl-3">1. Dados do Cliente</h3>
-              
-              {/* SELECT INTELIGENTE DE CLIENTES */}
               {clientesSalvos.length > 0 && (
                 <div className="w-64">
-                  <select onChange={(e) => handleSelecionarClienteRapido(e.target.value)} className="w-full px-3 py-2 border-2 border-blue-400 bg-blue-50 text-blue-800 rounded-lg focus:ring-2 focus:ring-blue-600 outline-none text-sm font-bold cursor-pointer shadow-sm">
+                  <select onChange={(e) => handleSelecionarClienteRapido(e.target.value)} className="w-full px-3 py-2 border-2 border-blue-400 bg-blue-50 text-blue-800 rounded-lg text-sm font-bold cursor-pointer">
                     <option value="">⚡ Autopreencher Cliente...</option>
                     {clientesSalvos.map(c => <option key={c.id} value={c.cpfCnpj}>{c.razaoSocial} ({c.cpfCnpj})</option>)}
                   </select>
@@ -169,46 +187,39 @@ export default function EmitirNota() {
             </div>
 
             <div className="bg-gray-50 p-5 rounded-lg border border-gray-200 grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div className="md:col-span-1">
+              <div>
                 <label className="block text-xs font-bold text-gray-700 uppercase mb-1">CPF / CNPJ</label>
-                <input type="text" name="cpfCnpjTomador" value={formData.cpfCnpjTomador} onChange={handleChange} required 
-                  className="w-full px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none text-sm" placeholder="Digite para buscar..." maxLength="18" />
+                <input type="text" name="cpfCnpjTomador" value={formData.cpfCnpjTomador} onChange={handleChange} required className="w-full px-3 py-2 border border-gray-300 rounded text-sm" placeholder="00.000.000/0000-00" maxLength="18" />
               </div>
               <div className="md:col-span-2">
-                <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Razão Social / Nome</label>
-                <input type="text" name="razaoSocialTomador" value={formData.razaoSocialTomador} onChange={handleChange} required className="w-full px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none text-sm" />
+                <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Razão Social</label>
+                <input type="text" name="razaoSocialTomador" value={formData.razaoSocialTomador} onChange={handleChange} required className="w-full px-3 py-2 border border-gray-300 rounded text-sm" />
               </div>
-              <div className="md:col-span-1">
+              <div>
                 <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Insc. Municipal</label>
-                <input type="text" name="inscricaoMunicipalTomador" value={formData.inscricaoMunicipalTomador} onChange={handleChange} className="w-full px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none text-sm" />
+                <input type="text" name="inscricaoMunicipalTomador" value={formData.inscricaoMunicipalTomador} onChange={handleChange} className="w-full px-3 py-2 border border-gray-300 rounded text-sm" />
               </div>
               <div className="md:col-span-4">
                 <label className="block text-xs font-bold text-gray-700 uppercase mb-1">E-mail</label>
-                <input type="email" name="emailTomador" value={formData.emailTomador} onChange={handleChange} className="w-full px-3 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none text-sm" />
+                <input type="email" name="emailTomador" value={formData.emailTomador} onChange={handleChange} className="w-full px-3 py-2 border border-gray-300 rounded text-sm" />
               </div>
 
-              {/* Endereço */}
-              <div className="md:col-span-4 mt-2">
-                <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
-                  <div className="md:col-span-1"><label className="block text-xs font-bold text-gray-700 uppercase mb-1">CEP</label><input type="text" name="cepTomador" value={formData.cepTomador} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
-                  <div className="md:col-span-2"><label className="block text-xs font-bold text-gray-700 uppercase mb-1">Logradouro</label><input type="text" name="logradouroTomador" value={formData.logradouroTomador} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
-                  <div className="md:col-span-1"><label className="block text-xs font-bold text-gray-700 uppercase mb-1">Número</label><input type="text" name="numeroTomador" value={formData.numeroTomador} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
-                  <div className="md:col-span-1"><label className="block text-xs font-bold text-gray-700 uppercase mb-1">Bairro</label><input type="text" name="bairroTomador" value={formData.bairroTomador} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
-                  <div className="md:col-span-1"><label className="block text-xs font-bold text-gray-700 uppercase mb-1">UF</label><input type="text" name="ufTomador" value={formData.ufTomador} onChange={handleChange} maxLength="2" className="w-full px-3 py-2 border rounded text-sm uppercase" /></div>
-                </div>
+              <div className="md:col-span-4 mt-2 grid grid-cols-1 md:grid-cols-6 gap-4">
+                <div><label className="block text-xs font-bold text-gray-700 uppercase mb-1">CEP</label><input type="text" name="cepTomador" value={formData.cepTomador} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
+                <div className="md:col-span-2"><label className="block text-xs font-bold text-gray-700 uppercase mb-1">Logradouro</label><input type="text" name="logradouroTomador" value={formData.logradouroTomador} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
+                <div><label className="block text-xs font-bold text-gray-700 uppercase mb-1">Número</label><input type="text" name="numeroTomador" value={formData.numeroTomador} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
+                <div><label className="block text-xs font-bold text-gray-700 uppercase mb-1">Bairro</label><input type="text" name="bairroTomador" value={formData.bairroTomador} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
+                <div><label className="block text-xs font-bold text-gray-700 uppercase mb-1">UF</label><input type="text" name="ufTomador" value={formData.ufTomador} onChange={handleChange} maxLength="2" className="w-full px-3 py-2 border rounded text-sm uppercase" /></div>
               </div>
             </div>
           </section>
 
-          {/* 2. DADOS DO SERVIÇO */}
           <section>
             <div className="flex justify-between items-end mb-4">
               <h3 className="text-xl font-bold text-gray-800 border-l-4 border-blue-600 pl-3">2. Descrição do Serviço</h3>
-              
-              {/* SELECT INTELIGENTE DE PRODUTOS */}
               {produtosSalvos.length > 0 && (
                 <div className="w-64">
-                  <select onChange={(e) => handleSelecionarProdutoRapido(e.target.value)} className="w-full px-3 py-2 border-2 border-green-400 bg-green-50 text-green-800 rounded-lg focus:ring-2 focus:ring-green-600 outline-none text-sm font-bold cursor-pointer shadow-sm">
+                  <select onChange={(e) => handleSelecionarProdutoRapido(e.target.value)} className="w-full px-3 py-2 border-2 border-green-400 bg-green-50 text-green-800 rounded-lg text-sm font-bold cursor-pointer">
                     <option value="">⚡ Autopreencher Serviço...</option>
                     {produtosSalvos.map(p => <option key={p.id} value={p.id}>{p.nomeServico} - R$ {p.valorPadrao}</option>)}
                   </select>
@@ -221,60 +232,48 @@ export default function EmitirNota() {
                 <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Descrição Detalhada do Serviço</label>
                 <textarea name="descricaoServico" value={formData.descricaoServico} onChange={handleChange} required rows="3" className="w-full px-3 py-2 border rounded text-sm resize-none" />
               </div>
+              
               <div className="md:col-span-1">
-                <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Cód. LC 116 (Serviço)</label>
-                <input type="text" name="codigoServico" value={formData.codigoServico} onChange={handleChange} required className="w-full px-3 py-2 border rounded text-sm" />
+                <BuscaServico 
+                  valor={formData.codigoServico} 
+                  aoSelecionar={(codigoLimpo) => {
+                    setFormData((prev) => ({ ...prev, codigoServico: codigoLimpo }));
+                  }} 
+                />
               </div>
             </div>
           </section>
 
-          {/* 3. VALORES */}
           <section>
             <h3 className="text-xl font-bold text-gray-800 mb-4 border-l-4 border-green-600 pl-3">3. Valores e Tributos</h3>
             <div className="bg-green-50/50 p-5 rounded-lg border border-green-100 shadow-sm space-y-6">
-              
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div>
                   <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Valor do Serviço</label>
                   <div className="relative"><span className="absolute left-3 top-2 text-gray-500 text-sm">R$</span><input type="text" name="valorServico" value={formData.valorServico} onChange={handleChange} required className="w-full pl-9 pr-3 py-2 border rounded text-sm font-semibold" /></div>
                 </div>
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Deduções</label>
-                  <div className="relative"><span className="absolute left-3 top-2 text-gray-500 text-sm">R$</span><input type="text" name="deducoes" value={formData.deducoes} onChange={handleChange} className="w-full pl-9 pr-3 py-2 border rounded text-sm" /></div>
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 uppercase mb-1 text-nowrap">Desc. Incondicionado</label>
-                  <div className="relative"><span className="absolute left-3 top-2 text-gray-500 text-sm">R$</span><input type="text" name="descontoIncondicionado" value={formData.descontoIncondicionado} onChange={handleChange} className="w-full pl-9 pr-3 py-2 border rounded text-sm" /></div>
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Desc. Condicionado</label>
-                  <div className="relative"><span className="absolute left-3 top-2 text-gray-500 text-sm">R$</span><input type="text" name="descontoCondicionado" value={formData.descontoCondicionado} onChange={handleChange} className="w-full pl-9 pr-3 py-2 border rounded text-sm" /></div>
-                </div>
+                <div><label className="block text-xs font-bold text-gray-700 uppercase mb-1">Deduções</label><input type="text" name="deducoes" value={formData.deducoes} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
+                <div><label className="block text-xs font-bold text-gray-700 uppercase mb-1 text-nowrap">Desc. Incondicionado</label><input type="text" name="descontoIncondicionado" value={formData.descontoIncondicionado} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
+                <div><label className="block text-xs font-bold text-gray-700 uppercase mb-1">Desc. Condicionado</label><input type="text" name="descontoCondicionado" value={formData.descontoCondicionado} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
               </div>
 
-              <div className="pt-4 border-t border-green-200">
-                <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
-                  <div><label className="block text-xs font-bold text-gray-700 uppercase mb-1">PIS</label><input type="text" name="pis" value={formData.pis} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
-                  <div><label className="block text-xs font-bold text-gray-700 uppercase mb-1">COFINS</label><input type="text" name="cofins" value={formData.cofins} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
-                  <div><label className="block text-xs font-bold text-gray-700 uppercase mb-1">INSS</label><input type="text" name="inss" value={formData.inss} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
-                  <div><label className="block text-xs font-bold text-gray-700 uppercase mb-1">IR</label><input type="text" name="ir" value={formData.ir} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
-                  <div><label className="block text-xs font-bold text-gray-700 uppercase mb-1">CSLL</label><input type="text" name="csll" value={formData.csll} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
-                  <div className="bg-gray-800 p-2 rounded-lg text-white"><label className="block text-xs font-bold text-gray-300 uppercase mb-1">Alíquota ISS (%)</label><input type="number" step="0.01" name="aliquotaIss" value={formData.aliquotaIss} onChange={handleChange} required className="w-full px-2 py-1 border-none rounded text-gray-900 text-sm" /></div>
-                </div>
-                <div className="mt-4">
-                  <label className="flex items-center gap-3 cursor-pointer bg-white p-3 rounded border w-max"><input type="checkbox" name="reterIss" checked={formData.reterIss} onChange={handleChange} className="w-5 h-5 text-blue-600 rounded" /><span className="text-sm font-bold text-gray-700 uppercase">Imposto Retido (O Tomador paga o ISS)</span></label>
-                </div>
+              <div className="pt-4 border-t border-green-200 grid grid-cols-2 md:grid-cols-6 gap-4">
+                <div><label className="block text-xs font-bold text-gray-700 uppercase mb-1">PIS</label><input type="text" name="pis" value={formData.pis} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
+                <div><label className="block text-xs font-bold text-gray-700 uppercase mb-1">COFINS</label><input type="text" name="cofins" value={formData.cofins} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
+                <div><label className="block text-xs font-bold text-gray-700 uppercase mb-1">INSS</label><input type="text" name="inss" value={formData.inss} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
+                <div><label className="block text-xs font-bold text-gray-700 uppercase mb-1">IR</label><input type="text" name="ir" value={formData.ir} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
+                <div><label className="block text-xs font-bold text-gray-700 uppercase mb-1">CSLL</label><input type="text" name="csll" value={formData.csll} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
+                <div className="bg-gray-800 p-2 rounded-lg text-white"><label className="block text-xs font-bold text-gray-300 uppercase mb-1">ISS (%)</label><input type="number" step="0.01" name="aliquotaIss" value={formData.aliquotaIss} onChange={handleChange} required className="w-full px-2 py-1 border-none rounded text-gray-900 text-sm" /></div>
               </div>
-
+              <label className="flex items-center gap-3 cursor-pointer bg-white p-3 rounded border w-max"><input type="checkbox" name="reterIss" checked={formData.reterIss} onChange={handleChange} className="w-5 h-5 text-blue-600 rounded" /><span className="text-sm font-bold text-gray-700 uppercase">Imposto Retido</span></label>
             </div>
           </section>
 
           <div className="pt-6 border-t border-gray-200 flex justify-end">
-            <button type="submit" disabled={loading} className={`text-white font-bold py-4 px-10 rounded-lg shadow-md transition-all text-lg w-full md:w-auto uppercase tracking-wide ${loading ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 hover:shadow-lg'}`}>
-              {loading ? 'Processando emissão...' : 'Emitir NFS-e Completa'}
+            <button type="submit" disabled={loading} className={`text-white font-bold py-4 px-10 rounded-lg shadow-md transition-all text-lg w-full md:w-auto uppercase ${loading ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}>
+              {loading ? 'Processando...' : idReprocessar ? 'Corrigir e Emitir' : 'Emitir NFS-e Completa'}
             </button>
           </div>
-
         </form>
       </div>
     </div>

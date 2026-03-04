@@ -3,14 +3,17 @@ const admin = require("firebase-admin");
 const axios = require("axios");
 const cors = require("cors")({ origin: true });
 
-// Inicializa o Admin do Firebase (necessário para salvar dados no banco do Firebase depois do cadastro)
+// Inicializa o Admin do Firebase
 admin.initializeApp();
 const db = admin.firestore();
 
-// A sua chave do Sandbox do Plugnotas
-const PLUGNOTAS_API_KEY = "2da392a6-79d2-4304-a8b7-959572c7e44d";
+// ✨ CONFIGURAÇÃO CRÍTICA: Ignora campos 'undefined' para evitar o Erro 500 no Firestore
+db.settings({ ignoreUndefinedProperties: true });
 
-// --- FUNÇÃO 1: EMITIR NOTA COMPLETA ---
+// 🚨 SUA CHAVE DE PRODUÇÃO DO PLUGNOTAS
+const PLUGNOTAS_API_KEY = "7a1c5954ca39092ba5fd7b390755c5fa";
+
+// --- FUNÇÃO 1: EMITIR NOTA COMPLETA E SALVAR NO BANCO ---
 exports.emitirNotaPlugnotas = functions.https.onRequest((req, res) => {
   cors(req, res, async () => {
     if (req.method !== 'POST') {
@@ -19,11 +22,13 @@ exports.emitirNotaPlugnotas = functions.https.onRequest((req, res) => {
 
     try {
       const dadosFront = req.body;
+      const idIntegracao = `ideianfe-${Date.now()}`;
+      
       const payloadNFSe = [
         {
-          "idIntegracao": `ideianfe-${Date.now()}`, 
+          "idIntegracao": idIntegracao, 
           "prestador": {
-            "cpfCnpj": "01001001000113" 
+            "cpfCnpj": "52073286000139" // SEU CNPJ REAL (Fortaleza-CE)
           },
           "tomador": {
             "cpfCnpj": dadosFront.cpfCnpjTomador,
@@ -35,14 +40,13 @@ exports.emitirNotaPlugnotas = functions.https.onRequest((req, res) => {
               "logradouro": dadosFront.logradouroTomador,
               "numero": dadosFront.numeroTomador,
               "bairro": dadosFront.bairroTomador,
-              "codigoCidade": "4115200", 
+              "codigoCidade": "2304400", // CÓDIGO IBGE DE FORTALEZA-CE
               "estado": dadosFront.ufTomador
             }
           },
           "servico": {
-            "codigo": dadosFront.codigoServico,
+            "codigo": dadosFront.codigoServico, 
             "discriminacao": dadosFront.descricaoServico,
-            "cnae": "6204000",
             "iss": {
               "aliquota": dadosFront.aliquotaIss,
               "retido": dadosFront.reterIss
@@ -64,8 +68,9 @@ exports.emitirNotaPlugnotas = functions.https.onRequest((req, res) => {
         }
       ];
 
+      // 1. Envia para o PlugNotas
       const response = await axios.post(
-        "https://api.sandbox.plugnotas.com.br/nfse",
+        "https://api.plugnotas.com.br/nfse",
         payloadNFSe,
         {
           headers: {
@@ -75,7 +80,17 @@ exports.emitirNotaPlugnotas = functions.https.onRequest((req, res) => {
         }
       );
 
-      res.status(200).json({ sucesso: true, dados: response.data });
+      // 2. Salva o Histórico no Firestore (Agora sem erro de undefined!)
+      await db.collection("notas_emitidas").doc(idIntegracao).set({
+        dadosFormulario: dadosFront,
+        protocoloPlugnotas: response.data.documents && response.data.documents.length > 0 ? response.data.documents[0].protocol : (response.data.protocol || ""),
+        status: "EM PROCESSAMENTO",
+        dataEmissao: admin.firestore.FieldValue.serverTimestamp()
+      });
+
+      // 3. Devolve sucesso pro site (React)
+      res.status(200).json({ sucesso: true, dados: response.data, idNota: idIntegracao });
+      
     } catch (error) {
       console.error("Erro ao emitir:", error.response ? error.response.data : error.message);
       res.status(500).json({ sucesso: false, erro: error.response ? error.response.data : error.message });
@@ -83,7 +98,7 @@ exports.emitirNotaPlugnotas = functions.https.onRequest((req, res) => {
   });
 });
 
-// --- FUNÇÃO 2: CADASTRAR EMPRESA DE TESTE ---
+// --- FUNÇÃO 2: CADASTRAR EMPRESA DE TESTE (SANDBOX) ---
 exports.cadastrarEmpresaTeste = functions.https.onRequest((req, res) => {
   cors(req, res, async () => {
     try {
@@ -108,7 +123,7 @@ exports.cadastrarEmpresaTeste = functions.https.onRequest((req, res) => {
         payloadEmpresa,
         {
           headers: {
-            "x-api-key": PLUGNOTAS_API_KEY,
+            "x-api-key": "2da392a6-79d2-4304-a8b7-959572c7e44d",
             "Content-Type": "application/json"
           }
         }
@@ -122,7 +137,7 @@ exports.cadastrarEmpresaTeste = functions.https.onRequest((req, res) => {
   });
 });
 
-// --- FUNÇÃO 3: NOVA! CADASTRAR A EMPRESA REAL DO SEU CLIENTE ---
+// --- FUNÇÃO 3: CADASTRAR A EMPRESA REAL DO SEU CLIENTE (PRODUÇÃO) ---
 exports.configurarMinhaEmpresa = functions.https.onRequest((req, res) => {
   cors(req, res, async () => {
     if (req.method !== 'POST') {
@@ -130,21 +145,16 @@ exports.configurarMinhaEmpresa = functions.https.onRequest((req, res) => {
     }
 
     try {
-      // 1. Pega os dados que o React mandou da tela "Configuracoes.jsx"
       const dadosEmpresa = req.body.empresa;
-      const tipoCertificado = req.body.tipoCertificado; // 'mei' ou 'proprio'
+      const tipoCertificado = req.body.tipoCertificado;
 
-      // 2. Define o certificado (Procuração MEI vs Certificado Próprio)
       let idCertificadoPlugnotas = "";
       if (tipoCertificado === 'mei') {
-        // Se for MEI, força o uso do SEU certificado Master no Plugnotas
-        idCertificadoPlugnotas = "ID_DO_SEU_CERTIFICADO_A1_NO_PLUGNOTAS"; // Substituiremos pelo ID real depois
+        idCertificadoPlugnotas = "ID_DO_SEU_CERTIFICADO_A1_NO_PLUGNOTAS"; 
       } else {
-        // Futuramente: Código para fazer upload do PFX e pegar ID novo.
         idCertificadoPlugnotas = "ID_TEMPORARIO_ATE_CRIAR_UPLOAD";
       }
 
-      // 3. Monta o JSON oficial que a API do Plugnotas espera (Rota /empresa POST)
       const payloadPlugnotas = [
         {
           cpfCnpj: dadosEmpresa.cnpj.replace(/\D/g, ''),
@@ -158,10 +168,10 @@ exports.configurarMinhaEmpresa = functions.https.onRequest((req, res) => {
             logradouro: dadosEmpresa.logradouro,
             numero: dadosEmpresa.numero,
             bairro: dadosEmpresa.bairro,
-            codigoCidade: "4115200", // Fixo por enquanto, precisa vir da API do IBGE depois
+            codigoCidade: "2304400", 
             descricaoCidade: dadosEmpresa.cidade,
             estado: dadosEmpresa.uf,
-            codigoPais: "1058", // Brasil
+            codigoPais: "1058", 
             descricaoPais: "Brasil"
           },
           nfse: {
@@ -171,9 +181,8 @@ exports.configurarMinhaEmpresa = functions.https.onRequest((req, res) => {
         }
       ];
 
-      // 4. Manda pro Plugnotas!
       const response = await axios.post(
-        "https://api.sandbox.plugnotas.com.br/empresa", // ATENÇÃO: A rota correta para cadastro é /empresa, e não /empresas
+        "https://api.plugnotas.com.br/empresa", 
         payloadPlugnotas,
         {
           headers: {
@@ -183,17 +192,16 @@ exports.configurarMinhaEmpresa = functions.https.onRequest((req, res) => {
         }
       );
 
-      // 5. Salva no Firebase Firestore para você ter o controle de quem já se configurou
       const cnpjLimpo = dadosEmpresa.cnpj.replace(/\D/g, '');
       await db.collection("empresas_configuradas").doc(cnpjLimpo).set({
         ...dadosEmpresa,
         tipoCertificado: tipoCertificado,
         idCertificadoUsado: idCertificadoPlugnotas,
-        statusPlugnotas: "Ativo Sandbox",
+        statusPlugnotas: "Ativo Produção",
         dataCadastro: admin.firestore.FieldValue.serverTimestamp()
       });
 
-      res.status(200).json({ sucesso: true, mensagem: "Configurada com sucesso!", dadosPlugnotas: response.data });
+      res.status(200).json({ sucesso: true, mensagem: "Configurada com sucesso em Produção!", dadosPlugnotas: response.data });
     } catch (error) {
       console.error("Erro na API Empresa:", error.response ? error.response.data : error.message);
       res.status(500).json({ sucesso: false, erro: error.response ? error.response.data : error.message });
