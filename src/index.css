@@ -1,10 +1,31 @@
 @import "tailwindcss";
 
 @theme {
-  --color-bg-gray-50: #f9fafb;
+  /* Cores oficiais do IDEA NFEs v4 */
+  --color-idea-dark: #081c34;
+  --color-idea-base: #11335c;
+  --color-idea-light: #e6f0fa;
+  --color-idea-accent: #0ea5e9;
+  
+  --color-gray-50: #f9fafb;
 }
 
-body {
-  background-color: var(--color-bg-gray-50);
-  color: #1f2937;
+/* Configurações Globais */
+@layer base {
+  body {
+    @apply bg-gray-50 text-idea-dark antialiased;
+    font-family: 'Inter', sans-serif;
+  }
+}
+
+/* Scrollbar Customizada */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+}
+::-webkit-scrollbar-thumb {
+  background: #081c34;
+  border-radius: 10px;
 }

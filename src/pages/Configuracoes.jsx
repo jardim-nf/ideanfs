@@ -1,187 +1,451 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { db } from '../firebaseConfig';
 import axios from 'axios';
+import { useNavigate } from 'react-router-dom';
 
 export default function Configuracoes() {
   const navigate = useNavigate();
-  const [carregando, setCarregando] = useState(false);
-
-  // Estado para controlar o tipo de emissão (O Pulo do Gato)
-  const [tipoCertificado, setTipoCertificado] = useState('mei'); // 'mei' ou 'proprio'
-  const [arquivoCertificado, setArquivoCertificado] = useState(null);
-
-  const [formData, setFormData] = useState({
-    cnpj: '',
-    razaoSocial: '',
-    nomeFantasia: '',
-    regimeTributario: '5', // 5 = MEI, 1 = Simples Nacional, etc.
-    senhaCertificado: '', // Só será usado se for certificado próprio
-    cep: '', logradouro: '', numero: '', bairro: '', cidade: '', uf: ''
+  const [loading, setLoading] = useState(false);
+  const [mensagem, setMensagem] = useState({ tipo: '', texto: '' });
+  const [activeTab, setActiveTab] = useState('empresa');
+  
+  const [empresa, setEmpresa] = useState({
+    cnpj: '', razaoSocial: '', nomeFantasia: '', email: '', telefone: '',
+    cep: '', logradouro: '', numero: '', complemento: '', bairro: '', cidade: '', uf: '',
+    inscricaoMunicipal: '', inscricaoEstadual: '',
+    regimeTributario: '1',
+    tokenAPI: '7a1c5954ca39092ba5fd7b390755c5fa',
+    idCertificado: '',
+    certificadoValidade: ''
   });
+
+  // Formatações
+  const formatCnpj = (value) => {
+    const numericValue = value.replace(/\D/g, '');
+    return numericValue.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{1,2})/, '$1.$2.$3/$4-$5').slice(0, 18);
+  };
+
+  const formatCep = (value) => {
+    return value.replace(/\D/g, '').replace(/^(\d{5})(\d)/, '$1-$2').slice(0, 9);
+  };
+
+  const formatPhone = (value) => {
+    const numericValue = value.replace(/\D/g, '');
+    if (numericValue.length <= 10) {
+      return numericValue.replace(/(\d{2})(\d{4})(\d{4})/, '($1) $2-$3');
+    }
+    return numericValue.replace(/(\d{2})(\d{5})(\d{4})/, '($1) $2-$3');
+  };
+
+  // Buscar endereço por CEP
+  const buscarEnderecoPorCEP = async (cep) => {
+    const cepLimpo = cep.replace(/\D/g, '');
+    if (cepLimpo.length !== 8) return;
+    
+    try {
+      const response = await axios.get(`https://viacep.com.br/ws/${cepLimpo}/json/`);
+      if (!response.data.erro) {
+        setEmpresa(prev => ({
+          ...prev,
+          logradouro: response.data.logradouro,
+          bairro: response.data.bairro,
+          cidade: response.data.localidade,
+          uf: response.data.uf
+        }));
+      }
+    } catch (error) {
+      console.error("Erro ao buscar CEP:", error);
+    }
+  };
+
+  // Carregar configurações
+  useEffect(() => {
+    const buscarConfiguracoes = async () => {
+      try {
+        const docRef = doc(db, "configuracoes", "minha_empresa");
+        const docSnap = await getDoc(docRef);
+
+        if (docSnap.exists()) {
+          setEmpresa(docSnap.data());
+        }
+      } catch (error) {
+        console.error("Erro ao carregar configurações:", error);
+      }
+    };
+    buscarConfiguracoes();
+  }, []);
 
   const handleChange = async (e) => {
     let { name, value } = e.target;
 
+    // Aplicar máscaras
     if (name === 'cnpj') {
-      value = value.replace(/\D/g, '').replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5').slice(0, 18);
+      value = formatCnpj(value);
     }
-
     if (name === 'cep') {
-      value = value.replace(/\D/g, '').replace(/^(\d{5})(\d)/, '$1-$2').slice(0, 9);
+      value = formatCep(value);
       if (value.replace(/\D/g, '').length === 8) {
-        try {
-          const res = await axios.get(`https://viacep.com.br/ws/${value.replace(/\D/g, '')}/json/`);
-          if (!res.data.erro) {
-            setFormData(prev => ({
-              ...prev, cep: value, logradouro: res.data.logradouro,
-              bairro: res.data.bairro, cidade: res.data.localidade, uf: res.data.uf
-            }));
-            return;
-          }
-        } catch (error) { console.error(error); }
+        await buscarEnderecoPorCEP(value);
       }
     }
+    if (name === 'telefone') {
+      value = formatPhone(value);
+    }
 
-    setFormData(prev => ({ ...prev, [name]: value }));
+    setEmpresa(prev => ({ ...prev, [name]: value }));
   };
 
-  const handleFileChange = (e) => {
-    setArquivoCertificado(e.target.files[0]);
-  };
-
-const handleSalvarEmpresa = async (e) => {
+  // Salvar configurações
+  const handleSalvar = async (e) => {
     e.preventDefault();
-    setCarregando(true);
+    setLoading(true);
+    setMensagem({ tipo: '', texto: '' });
 
     try {
-      // Cole aqui a URL exata da sua Cloud Function (ela termina com /configurarMinhaEmpresa)
-      const urlBackend = "https://us-central1-ideanfe.cloudfunctions.net/configurarMinhaEmpresa";
-      
-      const payloadEnvio = {
-        empresa: formData,
-        tipoCertificado: tipoCertificado
-      };
+      await setDoc(doc(db, "configuracoes", "minha_empresa"), empresa);
 
-      const response = await axios.post(urlBackend, payloadEnvio);
-      
-      console.log("Sucesso no Backend:", response.data);
-      alert('Sua empresa foi configurada e ativada com sucesso!');
-      navigate('/dashboard'); // Manda o cara pro Menu pra ele começar a trabalhar
-      
+      // Mostrar toast de sucesso
+      const toast = document.createElement('div');
+      toast.className = 'fixed top-4 right-4 bg-green-500 text-white px-6 py-4 rounded-2xl shadow-2xl font-bold z-50 animate-slide-in';
+      toast.textContent = '✅ Configurações salvas com sucesso!';
+      document.body.appendChild(toast);
+      setTimeout(() => toast.remove(), 3000);
+
+      setMensagem({ tipo: 'sucesso', texto: 'Configurações salvas com sucesso!' });
     } catch (error) {
-      console.error("Erro ao chamar o backend:", error);
-      alert('Erro ao configurar empresa. Tente novamente.');
+      setMensagem({ tipo: 'erro', texto: 'Erro ao salvar as configurações.' });
     } finally {
-      setCarregando(false);
+      setLoading(false);
     }
   };
 
+  // Componente de Input
+  const InputConfig = ({ label, nome, val, placeholder, cols = "col-span-1", required = false, type = "text" }) => (
+    <div className={`flex flex-col ${cols}`}>
+      <label className="text-xs font-black text-idea-dark uppercase tracking-widest mb-1.5 ml-1 flex items-center gap-1">
+        {label} {required && <span className="text-red-500">*</span>}
+      </label>
+      <input 
+        type={type}
+        name={nome} 
+        value={val} 
+        onChange={handleChange} 
+        placeholder={placeholder}
+        required={required}
+        className="w-full px-4 py-3.5 rounded-xl border-2 border-gray-200 text-idea-dark font-bold text-sm outline-none focus:border-idea-accent hover:border-gray-300 transition-all"
+      />
+    </div>
+  );
+
   return (
-    <div className="min-h-screen bg-gray-100 p-8 font-sans">
-      <div className="max-w-4xl mx-auto space-y-8">
+    <div className="max-w-6xl mx-auto px-4 py-8 pb-20">
+      
+      {/* Header */}
+      <div className="mb-10">
+        <button 
+          onClick={() => navigate('/dashboard')} 
+          className="text-idea-accent font-bold mb-6 hover:text-idea-base transition-all flex items-center gap-2"
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+          Voltar para o Dashboard
+        </button>
         
-        <div className="bg-white rounded-xl shadow border border-gray-200 p-8">
-          <button onClick={() => navigate('/dashboard')} className="text-blue-600 font-bold mb-6 hover:text-blue-800">
-            ← Voltar para o Menu
+        <div className="flex items-center gap-4">
+          <div className="w-16 h-16 rounded-3xl bg-gradient-to-br from-idea-accent to-idea-base flex items-center justify-center text-3xl text-white shadow-xl">
+            ⚙️
+          </div>
+          <div>
+            <h1 className="text-5xl md:text-6xl font-black text-idea-dark tracking-tighter leading-tight">
+              Configurações
+            </h1>
+            <p className="text-gray-500 font-medium text-lg mt-2">
+              Configure os dados da sua empresa e integrações
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Tabs de Navegação */}
+      <div className="flex gap-2 mb-8 bg-white p-2 rounded-2xl shadow-sm border border-gray-100">
+        {[
+          { id: 'empresa', label: '🏢 Dados da Empresa' },
+          { id: 'endereco', label: '📍 Endereço' },
+          { id: 'integracao', label: '🔌 Integração' }
+        ].map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={`flex-1 px-6 py-4 rounded-xl font-bold text-sm transition-all ${
+              activeTab === tab.id 
+                ? 'bg-idea-accent text-white shadow-lg shadow-idea-accent/30' 
+                : 'text-gray-400 hover:text-idea-dark'
+            }`}
+          >
+            {tab.label}
           </button>
-          {/* TUTORIAL PARA O MEI QUE APARECE AUTOMATICAMENTE */}
-              {tipoCertificado === 'mei' && (
-                <div className="mt-4 p-5 bg-yellow-50 rounded-lg border border-yellow-200 animate-fade-in">
-                  <h4 className="font-extrabold text-yellow-800 mb-2 flex items-center gap-2">
-                    <span className="text-xl">💡</span> Passo a passo para ativar:
-                  </h4>
-                  <ol className="list-decimal list-inside space-y-2 text-sm text-yellow-900 ml-2">
-                    <li>Acesse o <a href="https://www.nfse.gov.br/EmissorNacional/" target="_blank" rel="noreferrer" className="font-bold underline text-blue-600 hover:text-blue-800">Portal Nacional da NFS-e</a> e faça login com seu <b>gov.br</b>.</li>
-                    <li>No menu principal, clique na aba <b>Procurações</b>.</li>
-                    <li>Clique em <b>Cadastrar Nova Procuração</b>.</li>
-                    <li>No campo CNPJ do Outorgado, digite o nosso CNPJ: <b className="bg-yellow-200 px-1 rounded select-all">00.000.000/0001-00</b>.</li>
-                    <li>Marque as permissões <b>"Emitir NFS-e"</b> e <b>"Cancelar NFS-e"</b>.</li>
-                    <li>Salve. Depois, basta clicar no botão roxo abaixo para finalizar aqui no IdeaNFS!</li>
-                  </ol>
+        ))}
+      </div>
+
+      {/* Barra de Progresso */}
+      <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden mb-8">
+        <div 
+          className="h-full bg-gradient-to-r from-idea-accent to-idea-base transition-all duration-500 rounded-full"
+          style={{ width: activeTab === 'empresa' ? '33%' : activeTab === 'endereco' ? '66%' : '100%' }}
+        />
+      </div>
+
+      {mensagem.texto && (
+        <div className={`mb-6 p-4 rounded-2xl font-bold text-center animate-slide-in ${
+          mensagem.tipo === 'sucesso' ? 'bg-green-100 text-green-700 border-2 border-green-200' : 'bg-red-100 text-red-700 border-2 border-red-200'
+        }`}>
+          {mensagem.texto}
+        </div>
+      )}
+
+      <form onSubmit={handleSalvar} className="space-y-6">
+        
+        {/* TAB 1: DADOS DA EMPRESA */}
+        {activeTab === 'empresa' && (
+          <div className="bg-white rounded-3xl shadow-lg border-2 border-idea-accent/20 p-8 animate-fade-in">
+            <div className="flex items-center gap-4 mb-8">
+              <div className="w-12 h-12 rounded-2xl bg-idea-accent text-white flex items-center justify-center text-xl font-black">
+                01
+              </div>
+              <div>
+                <h3 className="text-2xl font-black text-idea-dark">Dados Cadastrais</h3>
+                <p className="text-gray-500 text-sm font-medium">Informações principais da sua empresa</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <InputConfig label="CNPJ" nome="cnpj" val={empresa.cnpj} placeholder="00.000.000/0000-00" required cols="md:col-span-1" />
+              <InputConfig label="Razão Social" nome="razaoSocial" val={empresa.razaoSocial} required cols="md:col-span-2" />
+              <InputConfig label="Nome Fantasia" nome="nomeFantasia" val={empresa.nomeFantasia} cols="md:col-span-2" />
+              
+              <div className="md:col-span-2 grid grid-cols-2 gap-6">
+                <div className="flex flex-col">
+                  <label className="text-xs font-black text-idea-dark uppercase tracking-widest mb-1.5 ml-1">
+                    Regime Tributário <span className="text-red-500">*</span>
+                  </label>
+                  <select 
+                    name="regimeTributario" 
+                    value={empresa.regimeTributario} 
+                    onChange={handleChange}
+                    className="w-full px-4 py-3.5 rounded-xl border-2 border-gray-200 text-idea-dark font-bold text-sm outline-none focus:border-idea-accent hover:border-gray-300 transition-all"
+                  >
+                    <option value="1">Simples Nacional</option>
+                    <option value="2">Simples Nacional - Excesso de Sublimite</option>
+                    <option value="3">Regime Normal (Lucro Presumido)</option>
+                    <option value="4">Regime Normal (Lucro Real)</option>
+                    <option value="5">MEI</option>
+                  </select>
                 </div>
-              )}
-          <h2 className="text-2xl font-extrabold text-gray-800 mb-2 border-l-4 border-purple-600 pl-3">
-            Dados da Minha Empresa
-          </h2>
-          <p className="text-gray-500 text-sm mb-6 pl-4">Configure os dados do seu negócio para habilitar a emissão de notas.</p>
-          
-          <form onSubmit={handleSalvarEmpresa} className="space-y-6">
-            
-            {/* 1. O SEGREDO DO SISTEMA (ESCOLHA DO CERTIFICADO) */}
-            <div className="bg-purple-50 p-5 rounded-lg border border-purple-200">
-              <h3 className="font-bold text-purple-800 mb-3">Como você deseja emitir suas notas?</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+                <InputConfig label="Inscrição Municipal" nome="inscricaoMunicipal" val={empresa.inscricaoMunicipal} />
+              </div>
+
+              <div className="md:col-span-2 grid grid-cols-2 gap-6">
+                <InputConfig label="Inscrição Estadual" nome="inscricaoEstadual" val={empresa.inscricaoEstadual} />
+                <InputConfig label="Telefone" nome="telefone" val={empresa.telefone} placeholder="(11) 99999-9999" />
+              </div>
+
+              <InputConfig label="E-mail de Contato" nome="email" val={empresa.email} type="email" required cols="md:col-span-2" />
+            </div>
+          </div>
+        )}
+
+        {/* TAB 2: ENDEREÇO */}
+        {activeTab === 'endereco' && (
+          <div className="bg-white rounded-3xl shadow-lg border-2 border-idea-accent/20 p-8 animate-fade-in">
+            <div className="flex items-center gap-4 mb-8">
+              <div className="w-12 h-12 rounded-2xl bg-idea-accent text-white flex items-center justify-center text-xl font-black">
+                02
+              </div>
+              <div>
+                <h3 className="text-2xl font-black text-idea-dark">Endereço da Empresa</h3>
+                <p className="text-gray-500 text-sm font-medium">Localização para emissão das notas</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
+              <InputConfig label="CEP" nome="cep" val={empresa.cep} placeholder="00000-000" required cols="md:col-span-2" />
+              <InputConfig label="Logradouro" nome="logradouro" val={empresa.logradouro} required cols="md:col-span-5" />
+              <InputConfig label="Número" nome="numero" val={empresa.numero} required cols="md:col-span-1" />
+              <InputConfig label="Complemento" nome="complemento" val={empresa.complemento} cols="md:col-span-2" />
+              <InputConfig label="Bairro" nome="bairro" val={empresa.bairro} required cols="md:col-span-3" />
+              <InputConfig label="Cidade" nome="cidade" val={empresa.cidade} required cols="md:col-span-3" />
+              <InputConfig label="UF" nome="uf" val={empresa.uf} required max="2" cols="md:col-span-1" />
+            </div>
+
+            {/* Info Card */}
+            <div className="mt-8 p-4 bg-idea-light/30 rounded-xl border border-idea-accent/20">
+              <div className="flex items-start gap-3">
+                <span className="text-idea-accent text-xl">📍</span>
+                <div>
+                  <p className="text-xs font-bold text-idea-dark uppercase tracking-wider mb-1">Endereço Fiscal</p>
+                  <p className="text-sm font-medium text-gray-600">
+                    Este endereço será usado como padrão na emissão das notas fiscais e deve corresponder ao endereço cadastrado na prefeitura.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 3: INTEGRAÇÃO */}
+        {activeTab === 'integracao' && (
+          <div className="bg-gradient-to-br from-idea-dark to-idea-base rounded-3xl shadow-xl p-8 text-white animate-fade-in">
+            <div className="flex items-center gap-4 mb-8">
+              <div className="w-12 h-12 rounded-2xl bg-white/10 text-idea-accent flex items-center justify-center text-xl font-black">
+                03
+              </div>
+              <div>
+                <h3 className="text-2xl font-black text-white">Integração PlugNotas</h3>
+                <p className="text-white/60 text-sm font-medium">Configurações técnicas e certificado digital</p>
+              </div>
+            </div>
+
+            <div className="space-y-6">
+              {/* Token API */}
+              <div>
+                <label className="text-xs font-black text-white/50 uppercase tracking-widest mb-2 block">
+                  Token de Acesso API
+                </label>
+                <div className="relative">
+                  <input 
+                    type="password" 
+                    name="tokenAPI" 
+                    value={empresa.tokenAPI} 
+                    onChange={handleChange}
+                    className="w-full px-6 py-4 bg-white/10 border-2 border-white/20 rounded-xl text-white font-mono text-lg outline-none focus:border-idea-accent transition-all pr-12"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => navigator.clipboard.writeText(empresa.tokenAPI)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 p-2 bg-white/10 rounded-lg hover:bg-white/20 transition-all"
+                    title="Copiar token"
+                  >
+                    📋
+                  </button>
+                </div>
+                <p className="text-white/40 text-xs mt-2 font-medium">
+                  Token utilizado para autenticar as requisições à API da PlugNotas
+                </p>
+              </div>
+
+              {/* Certificado Digital */}
+              <div className="pt-6 border-t border-white/10">
+                <label className="text-xs font-black text-white/50 uppercase tracking-widest mb-4 block">
+                  Certificado Digital A1
+                </label>
                 
-                {/* Opção MEI */}
-                <label className={`cursor-pointer p-4 rounded-lg border-2 transition-all ${tipoCertificado === 'mei' ? 'border-purple-600 bg-white shadow' : 'border-gray-200 hover:border-purple-300'}`}>
-                  <div className="flex items-center gap-3 mb-2">
-                    <input type="radio" name="tipoEmissao" value="mei" checked={tipoCertificado === 'mei'} onChange={() => { setTipoCertificado('mei'); setFormData({...formData, regimeTributario: '5'}); }} className="w-5 h-5 text-purple-600" />
-                    <span className="font-bold text-gray-800">Sou MEI (Procuração)</span>
-                  </div>
-                  <p className="text-xs text-gray-500 ml-8">Emite notas sem precisar comprar certificado digital, usando a procuração do GOV.BR.</p>
-                </label>
-
-                {/* Opção Com Certificado */}
-                <label className={`cursor-pointer p-4 rounded-lg border-2 transition-all ${tipoCertificado === 'proprio' ? 'border-purple-600 bg-white shadow' : 'border-gray-200 hover:border-purple-300'}`}>
-                  <div className="flex items-center gap-3 mb-2">
-                    <input type="radio" name="tipoEmissao" value="proprio" checked={tipoCertificado === 'proprio'} onChange={() => { setTipoCertificado('proprio'); setFormData({...formData, regimeTributario: '1'}); }} className="w-5 h-5 text-purple-600" />
-                    <span className="font-bold text-gray-800">Tenho Certificado A1</span>
-                  </div>
-                  <p className="text-xs text-gray-500 ml-8">Para empresas LTDA, Simples Nacional, ou MEIs que já possuem certificado próprio em arquivo.</p>
-                </label>
-              </div>
-
-              {/* Se escolheu certificado próprio, abre os campos de upload */}
-              {tipoCertificado === 'proprio' && (
-                <div className="mt-4 p-4 bg-white rounded border border-purple-100 grid grid-cols-1 md:grid-cols-2 gap-4 animate-fade-in">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div>
-                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Arquivo do Certificado (.pfx)</label>
-                    <input type="file" accept=".pfx,.p12" onChange={handleFileChange} required className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-purple-50 file:text-purple-700 hover:file:bg-purple-100 cursor-pointer" />
+                    <label className="text-xs font-bold text-white/70 mb-2 block">ID do Certificado</label>
+                    <input 
+                      type="text" 
+                      name="idCertificado" 
+                      value={empresa.idCertificado} 
+                      onChange={handleChange}
+                      placeholder="ID gerado após upload"
+                      className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-xl focus:border-idea-accent outline-none transition-all text-white placeholder:text-white/30"
+                    />
                   </div>
+                  
                   <div>
-                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Senha do Certificado</label>
-                    <input type="password" name="senhaCertificado" value={formData.senhaCertificado} onChange={handleChange} required className="w-full px-3 py-2 border rounded focus:ring-2 focus:ring-purple-500 outline-none text-sm" placeholder="••••••••" />
+                    <label className="text-xs font-bold text-white/70 mb-2 block">Data de Validade</label>
+                    <input 
+                      type="text" 
+                      name="certificadoValidade" 
+                      value={empresa.certificadoValidade} 
+                      onChange={handleChange}
+                      placeholder="00/00/0000"
+                      className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-xl focus:border-idea-accent outline-none transition-all text-white placeholder:text-white/30"
+                    />
                   </div>
                 </div>
+
+                {/* Área de Upload */}
+                <div className="mt-6 p-8 border-2 border-dashed border-white/20 rounded-2xl text-center hover:border-idea-accent transition-all cursor-pointer group">
+                  <div className="text-5xl mb-4 group-hover:scale-110 transition-transform">⬆️</div>
+                  <p className="text-white font-bold text-lg">Clique para fazer upload do certificado</p>
+                  <p className="text-white/40 text-sm mt-2">Arquivos .pfx ou .p12 (até 5MB)</p>
+                </div>
+              </div>
+
+              {/* Status da Conexão */}
+              <div className="mt-6 p-4 bg-white/5 rounded-xl border border-white/10">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-3 h-3 bg-green-400 rounded-full animate-pulse"></div>
+                    <span className="text-white font-bold">API PlugNotas</span>
+                  </div>
+                  <span className="text-green-400 text-sm font-bold">● Online</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Botões de Navegação e Salvamento */}
+        <div className="flex items-center justify-between gap-4 mt-8">
+          <div>
+            {activeTab !== 'empresa' && (
+              <button
+                type="button"
+                onClick={() => setActiveTab(activeTab === 'endereco' ? 'empresa' : 'endereco')}
+                className="px-8 py-4 rounded-xl font-bold border-2 border-gray-200 hover:border-idea-accent transition-all flex items-center gap-2"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                </svg>
+                Voltar
+              </button>
+            )}
+          </div>
+
+          <div className="flex gap-4">
+            {activeTab !== 'integracao' && (
+              <button
+                type="button"
+                onClick={() => setActiveTab(activeTab === 'empresa' ? 'endereco' : 'integracao')}
+                className="px-8 py-4 rounded-xl font-bold bg-idea-dark text-white hover:bg-idea-base transition-all flex items-center gap-2"
+              >
+                Próximo
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </button>
+            )}
+
+            <button 
+              type="submit" 
+              disabled={loading}
+              className={`px-12 py-4 rounded-xl font-black text-white shadow-2xl transition-all transform flex items-center gap-3 ${
+                loading 
+                  ? 'bg-gray-400 cursor-not-allowed' 
+                  : 'bg-gradient-to-r from-idea-accent to-idea-base hover:shadow-xl hover:scale-105'
+              }`}
+            >
+              {loading ? (
+                <>
+                  <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Salvando...
+                </>
+              ) : (
+                '💾 Salvar Configurações'
               )}
-            </div>
-
-            {/* 2. DADOS DA EMPRESA */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="md:col-span-1"><label className="block text-sm font-bold text-gray-700 mb-1">CNPJ</label><input type="text" name="cnpj" value={formData.cnpj} onChange={handleChange} required className="w-full p-3 border rounded-lg focus:ring-2 outline-none" placeholder="00.000.000/0001-00" /></div>
-              <div className="md:col-span-2"><label className="block text-sm font-bold text-gray-700 mb-1">Razão Social</label><input type="text" name="razaoSocial" value={formData.razaoSocial} onChange={handleChange} required className="w-full p-3 border rounded-lg focus:ring-2 outline-none" /></div>
-              <div className="md:col-span-2"><label className="block text-sm font-bold text-gray-700 mb-1">Nome Fantasia</label><input type="text" name="nomeFantasia" value={formData.nomeFantasia} onChange={handleChange} className="w-full p-3 border rounded-lg focus:ring-2 outline-none" /></div>
-              <div className="md:col-span-1">
-                <label className="block text-sm font-bold text-gray-700 mb-1">Regime Tributário</label>
-                <select name="regimeTributario" value={formData.regimeTributario} onChange={handleChange} className="w-full p-3 border rounded-lg focus:ring-2 outline-none bg-white">
-                  <option value="5">MEI</option>
-                  <option value="1">Simples Nacional</option>
-                  <option value="3">Lucro Presumido</option>
-                  <option value="4">Lucro Real</option>
-                </select>
-              </div>
-            </div>
-
-            {/* 3. ENDEREÇO DA EMPRESA */}
-            <div className="p-4 bg-gray-50 border rounded-lg">
-              <h3 className="text-sm font-bold text-gray-700 mb-4 uppercase">Endereço da Sede</h3>
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div className="md:col-span-1"><label className="block text-xs font-bold text-gray-600 mb-1">CEP</label><input type="text" name="cep" value={formData.cep} onChange={handleChange} required className="w-full p-2 border rounded" placeholder="00000-000" /></div>
-                <div className="md:col-span-2"><label className="block text-xs font-bold text-gray-600 mb-1">Logradouro</label><input type="text" name="logradouro" value={formData.logradouro} onChange={handleChange} required className="w-full p-2 border rounded" /></div>
-                <div className="md:col-span-1"><label className="block text-xs font-bold text-gray-600 mb-1">Número</label><input type="text" name="numero" value={formData.numero} onChange={handleChange} required className="w-full p-2 border rounded" /></div>
-                <div className="md:col-span-2"><label className="block text-xs font-bold text-gray-600 mb-1">Bairro</label><input type="text" name="bairro" value={formData.bairro} onChange={handleChange} required className="w-full p-2 border rounded" /></div>
-                <div className="md:col-span-1"><label className="block text-xs font-bold text-gray-600 mb-1">Cidade</label><input type="text" name="cidade" value={formData.cidade} onChange={handleChange} required className="w-full p-2 border rounded" /></div>
-                <div className="md:col-span-1"><label className="block text-xs font-bold text-gray-600 mb-1">UF</label><input type="text" name="uf" value={formData.uf} onChange={handleChange} required maxLength="2" className="w-full p-2 border rounded uppercase" /></div>
-              </div>
-            </div>
-
-            <button type="submit" disabled={carregando} className="bg-purple-600 text-white font-bold py-4 px-8 rounded-lg mt-4 hover:bg-purple-700 shadow-md transition-colors w-full text-lg">
-              {carregando ? 'Configurando...' : 'Salvar Configurações e Ativar Emissão'}
             </button>
-          </form>
+          </div>
         </div>
 
-      </div>
+      </form>
     </div>
   );
 }

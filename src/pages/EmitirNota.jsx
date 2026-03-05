@@ -1,12 +1,11 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-// Importando o Banco de Dados
 import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebaseConfig';
 import BuscaServico from '../components/BuscaServico';
 
-// --- Funções de Máscara ---
+// --- Funções de Máscara (MANTIDAS) ---
 const formatCpfCnpj = (value) => {
   const numericValue = value.replace(/\D/g, '');
   if (numericValue.length <= 11) return numericValue.replace(/(\d{3})(\d{3})(\d{3})(\d{1,2})/, '$1.$2.$3-$4').slice(0, 14);
@@ -19,7 +18,6 @@ const formatCurrency = (value) => {
   return number.replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.');
 };
 const formatCep = (value) => value.replace(/\D/g, '').replace(/(\d{5})(\d)/, '$1-$2').slice(0, 9);
-// --------------------------
 
 export default function EmitirNota() {
   const [loading, setLoading] = useState(false);
@@ -29,24 +27,22 @@ export default function EmitirNota() {
   
   const [clientesSalvos, setClientesSalvos] = useState([]);
   const [produtosSalvos, setProdutosSalvos] = useState([]);
+  const [activeTab, setActiveTab] = useState('cliente');
 
   const [formData, setFormData] = useState({
     cpfCnpjTomador: '', razaoSocialTomador: '', emailTomador: '', inscricaoMunicipalTomador: '',
     cepTomador: '', logradouroTomador: '', numeroTomador: '', bairroTomador: '', cidadeTomador: '', ufTomador: '',
-    codigoCidadeTomador: '', // CAMPO CRÍTICO PARA O PLUGNOTAS
+    codigoCidadeTomador: '', 
     descricaoServico: '', codigoServico: '', valorServico: '', deducoes: '', descontoCondicionado: '', descontoIncondicionado: '',
     aliquotaIss: '', reterIss: false, pis: '', cofins: '', inss: '', ir: '', csll: '',
   });
 
-  // ✨ FUNÇÃO PARA BUSCAR CÓDIGO IBGE VIA CEP
   const buscarEnderecoPorCEP = async (cep) => {
     const cepLimpo = cep.replace(/\D/g, '');
     if (cepLimpo.length !== 8) return;
-
     try {
       const response = await axios.get(`https://viacep.com.br/ws/${cepLimpo}/json/`);
       const dados = response.data;
-
       if (!dados.erro) {
         setFormData(prev => ({
           ...prev,
@@ -54,7 +50,7 @@ export default function EmitirNota() {
           bairroTomador: dados.bairro,
           cidadeTomador: dados.localidade,
           ufTomador: dados.uf,
-          codigoCidadeTomador: dados.ibge // Captura o código de 7 dígitos do IBGE
+          codigoCidadeTomador: dados.ibge 
         }));
       }
     } catch (error) {
@@ -62,7 +58,6 @@ export default function EmitirNota() {
     }
   };
 
-  // 1. CARREGAR DADOS E NOTA ANTIGA
   useEffect(() => {
     const carregarDadosIniciais = async () => {
       try {
@@ -74,14 +69,9 @@ export default function EmitirNota() {
         if (idReprocessar) {
           const docRef = doc(db, "notas_emitidas", idReprocessar);
           const docSnap = await getDoc(docRef);
-          
           if (docSnap.exists()) {
             const dadosHistoricos = docSnap.data().dadosFormulario;
             setFormData(dadosHistoricos);
-            // Se a nota histórica não tiver o código da cidade, tenta buscar pelo CEP dela
-            if (!dadosHistoricos.codigoCidadeTomador && dadosHistoricos.cepTomador) {
-                buscarEnderecoPorCEP(dadosHistoricos.cepTomador);
-            }
           }
         }
       } catch (error) {
@@ -91,30 +81,16 @@ export default function EmitirNota() {
     carregarDadosIniciais();
   }, [idReprocessar]);
 
-  // 2. HANDLERS
   const handleChange = (e) => {
     let { name, value, type, checked } = e.target;
-
-    if (name === 'cpfCnpjTomador') {
-      value = formatCpfCnpj(value);
-      const clienteEncontrado = clientesSalvos.find(c => c.cpfCnpj === value);
-      if (clienteEncontrado) {
-        handleSelecionarClienteRapido(value);
-        return;
-      }
-    }
-
+    if (name === 'cpfCnpjTomador') value = formatCpfCnpj(value);
     if (name === 'cepTomador') {
       value = formatCep(value);
-      if (value.replace(/\D/g, '').length === 8) {
-        buscarEnderecoPorCEP(value);
-      }
+      if (value.replace(/\D/g, '').length === 8) buscarEnderecoPorCEP(value);
     }
-
     if (['valorServico', 'deducoes', 'descontoCondicionado', 'descontoIncondicionado', 'pis', 'cofins', 'inss', 'ir', 'csll'].includes(name)) {
       value = formatCurrency(value);
     }
-
     setFormData((prev) => ({ ...prev, [name]: type === 'checkbox' ? checked : value }));
   };
 
@@ -126,13 +102,9 @@ export default function EmitirNota() {
         cpfCnpjTomador: c.cpfCnpj, razaoSocialTomador: c.razaoSocial, emailTomador: c.email,
         inscricaoMunicipalTomador: c.inscricaoMunicipal || '', cepTomador: c.cep, logradouroTomador: c.logradouro,
         numeroTomador: c.numero, bairroTomador: c.bairro, cidadeTomador: c.cidade, ufTomador: c.uf,
-        codigoCidadeTomador: c.codigoIBGE || prev.codigoCidadeTomador // Puxa do cadastro ou mantém o atual
+        codigoCidadeTomador: c.codigoIBGE || prev.codigoCidadeTomador 
       }));
-
-      // Se o cliente não tem o código IBGE salvo no banco, dispara a busca pelo CEP
-      if (!c.codigoIBGE && c.cep) {
-        buscarEnderecoPorCEP(c.cep);
-      }
+      setActiveTab('servico');
     }
   };
 
@@ -146,217 +118,405 @@ export default function EmitirNota() {
         valorServico: p.valorPadrao, 
         aliquotaIss: p.aliquotaIss
       }));
+      setActiveTab('valores');
     }
   };
 
-// 3. EMISSÃO FINAL (Blindada contra erros de IBGE e Código de Serviço)
   const handleHomologar = async (e) => {
     e.preventDefault();
-if (!formData.logradouroTomador || formData.logradouroTomador.trim() === "") {
-    alert("⚠️ Erro: O campo Logradouro (Rua) é obrigatório. Por favor, preencha o endereço do cliente.");
-    return;
-  }
-    // --- 1. VALIDAÇÃO DO CÓDIGO DE SERVIÇO (Mínimo 6 dígitos sem máscara) ---
-    const codigoServicoLimpo = formData.codigoServico.replace(/\D/g, '');
-    
-    if (codigoServicoLimpo.length < 6) {
-      alert(`⚠️ Erro no Serviço: O código "${formData.codigoServico}" é inválido. \n\nPara o PlugNotas, o código de serviço deve ter pelo menos 6 dígitos numéricos (ex: 010101). Verifique o cadastro do serviço.`);
-      return;
-    }
-
-    // --- 2. VALIDAÇÃO DO CÓDIGO IBGE (Evita erro E0240 e RNG6110) ---
-    if (!formData.codigoCidadeTomador) {
-      alert("⚠️ Erro de Localização: O Código IBGE da cidade não foi detectado. \n\nPor favor, apague o último dígito do CEP e digite-o novamente para que o sistema capture o código oficial do IBGE automaticamente.");
-      return;
-    }
-
     setLoading(true);
-
     try {
-      // Função auxiliar para converter "1.250,00" em 1250.00
       const parseCurrency = (val) => {
         if (!val) return 0;
         return Number(String(val).replace(/\./g, '').replace(',', '.')) || 0;
       };
 
-      // --- 3. LIMPEZA FINAL DOS DADOS PARA O BACKEND ---
       const dadosLimpos = {
         ...formData,
-        // Remove máscaras de documentos e localização
         cpfCnpjTomador: formData.cpfCnpjTomador.replace(/\D/g, ''),
         cepTomador: formData.cepTomador.replace(/\D/g, ''),
-        codigoServico: codigoServicoLimpo, // Enviando apenas os 6+ dígitos numéricos
-        
-        // Garante que valores numéricos cheguem como Number e não String
+        codigoServico: formData.codigoServico.replace(/\D/g, ''), 
         valorServico: parseCurrency(formData.valorServico),
-        deducoes: parseCurrency(formData.deducoes),
-        descontoCondicionado: parseCurrency(formData.descontoCondicionado),
-        descontoIncondicionado: parseCurrency(formData.descontoIncondicionado),
-        pis: parseCurrency(formData.pis),
-        cofins: parseCurrency(formData.cofins),
-        inss: parseCurrency(formData.inss),
-        ir: parseCurrency(formData.ir),
-        csll: parseCurrency(formData.csll),
         aliquotaIss: Number(formData.aliquotaIss) || 0
       };
       
-      console.log('🚀 Enviando para o PlugNotas:', dadosLimpos);
-      console.table({
-  "Prestador CNPJ": "52073286000139", // Seu CNPJ
-  "Tomador CPF": dadosLimpos.cpfCnpjTomador,
-  "CEP Tomador": dadosLimpos.cepTomador,
-  "IBGE Tomador": dadosLimpos.codigoCidadeTomador, // Deve ser 3300506
-  "Serviço": dadosLimpos.codigoServico
-});
-
       const urlBackend = "https://us-central1-ideanfe.cloudfunctions.net/emitirNotaPlugnotas";
-      const response = await axios.post(urlBackend, dadosLimpos);
+      await axios.post(urlBackend, dadosLimpos);
       
-      alert('✅ Nota enviada com sucesso para processamento!');
-      console.log('✅ Resposta da API:', response.data);
+      // Toast de sucesso personalizado
+      const toast = document.createElement('div');
+      toast.className = 'fixed top-4 right-4 bg-green-500 text-white px-6 py-4 rounded-2xl shadow-2xl font-bold z-50 animate-slide-in';
+      toast.textContent = '✅ Nota emitida com sucesso!';
+      document.body.appendChild(toast);
+      setTimeout(() => toast.remove(), 3000);
       
-      // Redireciona para o histórico
-      navigate('/minhas-notas');
-      
+      setTimeout(() => navigate('/minhas-notas'), 1500);
     } catch (error) {
-      // Captura o erro detalhado que a API do PlugNotas retorna
-      const mensagemErro = error.response?.data?.erro?.message || 
-                          error.response?.data?.erro || 
-                          error.message;
-      
-      console.error('❌ Erro na emissão:', error.response?.data || error);
-      alert(`Erro ao emitir a nota: ${mensagemErro}`);
+      alert(`Erro: ${error.message}`);
     } finally {
       setLoading(false);
     }
   };
 
+  // Componente de Input melhorado
+  const InputForm = ({ label, nome, val, placeholder, max, cols, dark = false, icon, required = false }) => (
+    <div className={`flex flex-col ${cols || 'col-span-1'}`}>
+      <label className="text-xs font-black text-idea-dark uppercase tracking-widest mb-1.5 ml-1 flex items-center gap-1">
+        {icon && <span className="text-idea-accent">{icon}</span>}
+        {label} {required && <span className="text-red-500">*</span>}
+      </label>
+      <input 
+        type="text" 
+        name={nome} 
+        value={val} 
+        onChange={handleChange} 
+        placeholder={placeholder}
+        maxLength={max}
+        required={required}
+        className={`px-4 py-3.5 rounded-xl border-2 transition-all outline-none font-bold text-sm
+          ${dark 
+            ? 'bg-idea-dark/80 border-idea-base/30 text-white placeholder:text-gray-500 focus:border-idea-accent' 
+            : 'bg-white border-gray-200 text-idea-dark focus:border-idea-accent hover:border-gray-300'}`}
+      />
+    </div>
+  );
+
   return (
-    <div className="min-h-screen bg-gray-100 p-8 flex justify-center items-start font-sans">
-      <div className="w-full max-w-5xl bg-white rounded-xl shadow-lg border border-gray-200 p-8">
-        
-        <div className="mb-8 border-b border-gray-200 pb-4">
-          <h2 className="text-3xl font-extrabold text-gray-800 tracking-tight">
-            {idReprocessar ? 'Recuperação de Nota' : 'Emissão Completa - NFS-e'}
-          </h2>
-          <p className="text-gray-500 text-sm mt-1">
-            {idReprocessar ? `Corrigindo a nota: ${idReprocessar}` : 'Preencha os dados ou selecione dos seus cadastros.'}
-          </p>
+    <div className="max-w-6xl mx-auto px-4 pb-20">
+      
+      {/* HEADER COM PROGRESSO */}
+      <div className="mb-12">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-8">
+          <div>
+            <h1 className="text-5xl md:text-6xl font-black text-idea-dark tracking-tighter leading-tight">
+              {idReprocessar ? '🔄 Corrigir Nota' : '📄 Nova NFS-e'}
+            </h1>
+            <p className="text-gray-500 font-medium text-lg mt-2">
+              {idReprocessar ? 'Revise e corrija os dados da nota' : 'Preencha os dados para emitir sua nota fiscal'}
+            </p>
+          </div>
+          
+          {/* Status do Progresso */}
+          <div className="flex items-center gap-2 bg-white p-2 rounded-2xl shadow-sm border border-gray-100">
+            {['cliente', 'servico', 'valores'].map((tab, index) => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={`px-6 py-3 rounded-xl font-bold text-sm transition-all ${
+                  activeTab === tab 
+                    ? 'bg-idea-accent text-white shadow-lg shadow-idea-accent/30' 
+                    : 'text-gray-400 hover:text-idea-dark'
+                }`}
+              >
+                {index + 1}. {tab === 'cliente' ? 'Cliente' : tab === 'servico' ? 'Serviço' : 'Valores'}
+              </button>
+            ))}
+          </div>
         </div>
 
-        <form onSubmit={handleHomologar} className="space-y-10">
+        {/* Barra de Progresso Visual */}
+        <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
+          <div 
+            className="h-full bg-gradient-to-r from-idea-accent to-idea-base transition-all duration-500 rounded-full"
+            style={{ width: activeTab === 'cliente' ? '33%' : activeTab === 'servico' ? '66%' : '100%' }}
+          />
+        </div>
+      </div>
+
+      <form onSubmit={handleHomologar} className="space-y-6">
+        
+        {/* SEÇÃO 1: CLIENTE */}
+        <div className={`bg-white rounded-3xl shadow-lg border-2 transition-all duration-500 overflow-hidden
+          ${activeTab === 'cliente' ? 'border-idea-accent shadow-2xl' : 'border-gray-100 opacity-80'}`}>
           
-          <section>
-            <div className="flex justify-between items-end mb-4">
-              <h3 className="text-xl font-bold text-gray-800 border-l-4 border-blue-600 pl-3">1. Dados do Cliente</h3>
-              {clientesSalvos.length > 0 && (
-                <div className="w-64">
-                  <select onChange={(e) => handleSelecionarClienteRapido(e.target.value)} className="w-full px-3 py-2 border-2 border-blue-400 bg-blue-50 text-blue-800 rounded-lg text-sm font-bold cursor-pointer">
-                    <option value="">⚡ Autopreencher Cliente...</option>
-                    {clientesSalvos.map(c => <option key={c.id} value={c.cpfCnpj}>{c.razaoSocial} ({c.cpfCnpj})</option>)}
-                  </select>
-                </div>
-              )}
-            </div>
-
-            <div className="bg-gray-50 p-5 rounded-lg border border-gray-200 grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div>
-                <label className="block text-xs font-bold text-gray-700 uppercase mb-1">CPF / CNPJ</label>
-                <input type="text" name="cpfCnpjTomador" value={formData.cpfCnpjTomador} onChange={handleChange} required className="w-full px-3 py-2 border border-gray-300 rounded text-sm" placeholder="00.000.000/0000-00" maxLength="18" />
-              </div>
-              <div className="md:col-span-2">
-                <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Razão Social</label>
-                <input type="text" name="razaoSocialTomador" value={formData.razaoSocialTomador} onChange={handleChange} required className="w-full px-3 py-2 border border-gray-300 rounded text-sm" />
+          {/* Header da Seção */}
+          <div 
+            className="flex items-center justify-between p-6 cursor-pointer"
+            onClick={() => setActiveTab('cliente')}
+          >
+            <div className="flex items-center gap-4">
+              <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-xl font-black
+                ${activeTab === 'cliente' ? 'bg-idea-accent text-white' : 'bg-idea-light text-idea-dark'}`}>
+                01
               </div>
               <div>
-                <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Insc. Municipal</label>
-                <input type="text" name="inscricaoMunicipalTomador" value={formData.inscricaoMunicipalTomador} onChange={handleChange} className="w-full px-3 py-2 border border-gray-300 rounded text-sm" />
+                <h3 className="text-2xl font-black text-idea-dark">Dados do Tomador</h3>
+                <p className="text-gray-500 text-sm font-medium">Informações do cliente/contratante</p>
               </div>
-              <div className="md:col-span-4">
-                <label className="block text-xs font-bold text-gray-700 uppercase mb-1">E-mail</label>
-                <input type="email" name="emailTomador" value={formData.emailTomador} onChange={handleChange} className="w-full px-3 py-2 border border-gray-300 rounded text-sm" />
-              </div>
-
-              <div className="md:col-span-4 mt-2 grid grid-cols-1 md:grid-cols-6 gap-4">
-                <div>
-                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">CEP</label>
-                    <input type="text" name="cepTomador" value={formData.cepTomador} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm font-bold border-blue-300" />
-                </div>
-                <div className="md:col-span-2"><label className="block text-xs font-bold text-gray-700 uppercase mb-1">Logradouro</label><input type="text" name="logradouroTomador" value={formData.logradouroTomador} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
-                <div><label className="block text-xs font-bold text-gray-700 uppercase mb-1">Número</label><input type="text" name="numeroTomador" value={formData.numeroTomador} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
-                <div><label className="block text-xs font-bold text-gray-700 uppercase mb-1">Bairro</label><input type="text" name="bairroTomador" value={formData.bairroTomador} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
-                <div><label className="block text-xs font-bold text-gray-700 uppercase mb-1">UF</label><input type="text" name="ufTomador" value={formData.ufTomador} onChange={handleChange} maxLength="2" className="w-full px-3 py-2 border rounded text-sm uppercase" /></div>
-              </div>
-              
-              {/* INDICADOR VISUAL DO IBGE (Opcional, mas ajuda muito no debug) */}
-              <div className="md:col-span-4 text-[10px] text-gray-400 italic">
-                {formData.codigoCidadeTomador ? `✅ Código IBGE detectado: ${formData.codigoCidadeTomador}` : '❌ Código IBGE não carregado. Verifique o CEP.'}
-              </div>
-            </div>
-          </section>
-
-          <section>
-            <div className="flex justify-between items-end mb-4">
-              <h3 className="text-xl font-bold text-gray-800 border-l-4 border-blue-600 pl-3">2. Descrição do Serviço</h3>
-              {produtosSalvos.length > 0 && (
-                <div className="w-64">
-                  <select onChange={(e) => handleSelecionarProdutoRapido(e.target.value)} className="w-full px-3 py-2 border-2 border-green-400 bg-green-50 text-green-800 rounded-lg text-sm font-bold cursor-pointer">
-                    <option value="">⚡ Autopreencher Serviço...</option>
-                    {produtosSalvos.map(p => <option key={p.id} value={p.id}>{p.nomeServico} - R$ {p.valorPadrao}</option>)}
-                  </select>
-                </div>
-              )}
             </div>
             
-            <div className="bg-white p-5 rounded-lg border border-gray-200 grid grid-cols-1 md:grid-cols-4 gap-4 shadow-sm">
-              <div className="md:col-span-3">
-                <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Descrição Detalhada do Serviço</label>
-                <textarea name="descricaoServico" value={formData.descricaoServico} onChange={handleChange} required rows="3" className="w-full px-3 py-2 border rounded text-sm resize-none" />
+            {/* Select rápido */}
+            <div className="hidden md:block">
+              <select 
+                onClick={(e) => e.stopPropagation()}
+                onChange={(e) => handleSelecionarClienteRapido(e.target.value)} 
+                className="bg-idea-light/50 border-2 border-idea-accent/20 px-6 py-3 rounded-xl text-idea-dark font-bold text-sm outline-none focus:border-idea-accent transition-all min-w-[250px]"
+              >
+                <option value="">⚡ Carregar cliente salvo...</option>
+                {clientesSalvos.map(c => <option key={c.id} value={c.cpfCnpj}>{c.razaoSocial}</option>)}
+              </select>
+            </div>
+          </div>
+
+          {/* Conteúdo - Mostra só se a tab estiver ativa */}
+          {activeTab === 'cliente' && (
+            <div className="p-6 pt-0 border-t border-gray-100">
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-5 mt-6">
+                <InputForm label="CPF / CNPJ" nome="cpfCnpjTomador" val={formData.cpfCnpjTomador} max="18" cols="md:col-span-4" required />
+                <InputForm label="Razão Social" nome="razaoSocialTomador" val={formData.razaoSocialTomador} cols="md:col-span-8" required />
+                <InputForm label="E-mail" nome="emailTomador" val={formData.emailTomador} cols="md:col-span-8" />
+                <InputForm label="Inscrição Municipal" nome="inscricaoMunicipalTomador" val={formData.inscricaoMunicipalTomador} cols="md:col-span-4" />
+                
+                <div className="md:col-span-12 grid grid-cols-1 md:grid-cols-12 gap-5 pt-6 mt-4 border-t border-gray-100">
+                  <InputForm label="CEP" nome="cepTomador" val={formData.cepTomador} max="9" cols="md:col-span-2" required />
+                  <InputForm label="Endereço" nome="logradouroTomador" val={formData.logradouroTomador} cols="md:col-span-4" required />
+                  <InputForm label="Número" nome="numeroTomador" val={formData.numeroTomador} cols="md:col-span-1" required />
+                  <InputForm label="Bairro" nome="bairroTomador" val={formData.bairroTomador} cols="md:col-span-3" required />
+                  <InputForm label="Cidade" nome="cidadeTomador" val={formData.cidadeTomador} cols="md:col-span-3" required />
+                  <InputForm label="UF" nome="ufTomador" val={formData.ufTomador} max="2" cols="md:col-span-1" required />
+                </div>
               </div>
               
-              <div className="md:col-span-1">
-                <BuscaServico 
-                  valor={formData.codigoServico} 
-                  aoSelecionar={(codigoLimpo) => {
-                    setFormData((prev) => ({ ...prev, codigoServico: codigoLimpo }));
-                  }} 
-                />
+              {/* Botão Próximo */}
+              <div className="flex justify-end mt-8">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('servico')}
+                  className="bg-idea-dark text-white px-8 py-4 rounded-xl font-bold hover:bg-idea-base transition-all flex items-center gap-2"
+                >
+                  Próximo: Serviço
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
               </div>
             </div>
-          </section>
+          )}
+        </div>
 
-          <section>
-            <h3 className="text-xl font-bold text-gray-800 mb-4 border-l-4 border-green-600 pl-3">3. Valores e Tributos</h3>
-            <div className="bg-green-50/50 p-5 rounded-lg border border-green-100 shadow-sm space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Valor do Serviço</label>
-                  <div className="relative"><span className="absolute left-3 top-2 text-gray-500 text-sm">R$</span><input type="text" name="valorServico" value={formData.valorServico} onChange={handleChange} required className="w-full pl-9 pr-3 py-2 border rounded text-sm font-semibold" /></div>
+        {/* SEÇÃO 2: SERVIÇO */}
+        <div className={`bg-white rounded-3xl shadow-lg border-2 transition-all duration-500 overflow-hidden
+          ${activeTab === 'servico' ? 'border-idea-accent shadow-2xl' : 'border-gray-100 opacity-80'}`}>
+          
+          <div 
+            className="flex items-center justify-between p-6 cursor-pointer"
+            onClick={() => setActiveTab('servico')}
+          >
+            <div className="flex items-center gap-4">
+              <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-xl font-black
+                ${activeTab === 'servico' ? 'bg-idea-accent text-white' : 'bg-idea-light text-idea-dark'}`}>
+                02
+              </div>
+              <div>
+                <h3 className="text-2xl font-black text-idea-dark">Detalhes do Serviço</h3>
+                <p className="text-gray-500 text-sm font-medium">Descrição e código do serviço</p>
+              </div>
+            </div>
+            
+            <div className="hidden md:block">
+              <select 
+                onClick={(e) => e.stopPropagation()}
+                onChange={(e) => handleSelecionarProdutoRapido(e.target.value)} 
+                className="bg-idea-light/50 border-2 border-idea-base/20 px-6 py-3 rounded-xl text-idea-dark font-bold text-sm outline-none focus:border-idea-accent transition-all min-w-[250px]"
+              >
+                <option value="">⚡ Carregar serviço salvo...</option>
+                {produtosSalvos.map(p => <option key={p.id} value={p.id}>{p.nomeServico}</option>)}
+              </select>
+            </div>
+          </div>
+
+          {activeTab === 'servico' && (
+            <div className="p-6 pt-0 border-t border-gray-100">
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mt-6">
+                <div className="lg:col-span-8 flex flex-col">
+                  <label className="text-xs font-black text-idea-dark uppercase tracking-widest mb-1.5 ml-1 flex items-center gap-1">
+                    <span className="text-idea-accent">📝</span>
+                    Descrição do Serviço *
+                  </label>
+                  <textarea 
+                    name="descricaoServico" 
+                    value={formData.descricaoServico} 
+                    onChange={handleChange} 
+                    required 
+                    rows="6" 
+                    className="w-full px-5 py-4 bg-white border-2 border-gray-200 rounded-2xl focus:border-idea-accent outline-none font-bold text-idea-dark resize-none transition-all hover:border-gray-300"
+                    placeholder="Descreva detalhadamente o serviço prestado..."
+                  />
                 </div>
-                <div><label className="block text-xs font-bold text-gray-700 uppercase mb-1">Deduções</label><input type="text" name="deducoes" value={formData.deducoes} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
-                <div><label className="block text-xs font-bold text-gray-700 uppercase mb-1 text-nowrap">Desc. Incondicionado</label><input type="text" name="descontoIncondicionado" value={formData.descontoIncondicionado} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
-                <div><label className="block text-xs font-bold text-gray-700 uppercase mb-1">Desc. Condicionado</label><input type="text" name="descontoCondicionado" value={formData.descontoCondicionado} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
+                <div className="lg:col-span-4">
+                  <label className="text-xs font-black text-idea-dark uppercase tracking-widest mb-1.5 ml-1 flex items-center gap-1">
+                    <span className="text-idea-accent">🔢</span>
+                    Código do Serviço (LC 116) *
+                  </label>
+                  <BuscaServico 
+                    valor={formData.codigoServico} 
+                    aoSelecionar={(codigo) => setFormData(prev => ({ ...prev, codigoServico: codigo }))} 
+                  />
+                  
+                  {/* Info Card */}
+                  <div className="mt-4 p-4 bg-idea-light/30 rounded-xl border border-idea-accent/20">
+                    <p className="text-xs font-bold text-idea-dark uppercase tracking-wider mb-2">📍 Localização IBGE</p>
+                    <p className="text-sm font-black text-idea-accent">
+                      {formData.codigoCidadeTomador || 'Aguardando CEP...'}
+                    </p>
+                  </div>
+                </div>
               </div>
-
-              <div className="pt-4 border-t border-green-200 grid grid-cols-2 md:grid-cols-6 gap-4">
-                <div><label className="block text-xs font-bold text-gray-700 uppercase mb-1">PIS</label><input type="text" name="pis" value={formData.pis} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
-                <div><label className="block text-xs font-bold text-gray-700 uppercase mb-1">COFINS</label><input type="text" name="cofins" value={formData.cofins} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
-                <div><label className="block text-xs font-bold text-gray-700 uppercase mb-1">INSS</label><input type="text" name="inss" value={formData.inss} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
-                <div><label className="block text-xs font-bold text-gray-700 uppercase mb-1">IR</label><input type="text" name="ir" value={formData.ir} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
-                <div><label className="block text-xs font-bold text-gray-700 uppercase mb-1">CSLL</label><input type="text" name="csll" value={formData.csll} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
-                <div className="bg-gray-800 p-2 rounded-lg text-white"><label className="block text-xs font-bold text-gray-300 uppercase mb-1">ISS (%)</label><input type="number" step="0.01" name="aliquotaIss" value={formData.aliquotaIss} onChange={handleChange} required className="w-full px-2 py-1 border-none rounded text-gray-900 text-sm" /></div>
+              
+              <div className="flex justify-between mt-8">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('cliente')}
+                  className="px-8 py-4 rounded-xl font-bold border-2 border-gray-200 hover:border-idea-accent transition-all flex items-center gap-2"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                  Voltar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('valores')}
+                  className="bg-idea-dark text-white px-8 py-4 rounded-xl font-bold hover:bg-idea-base transition-all flex items-center gap-2"
+                >
+                  Próximo: Valores
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
               </div>
-              <label className="flex items-center gap-3 cursor-pointer bg-white p-3 rounded border w-max"><input type="checkbox" name="reterIss" checked={formData.reterIss} onChange={handleChange} className="w-5 h-5 text-blue-600 rounded" /><span className="text-sm font-bold text-gray-700 uppercase">Imposto Retido</span></label>
             </div>
-          </section>
+          )}
+        </div>
 
-          <div className="pt-6 border-t border-gray-200 flex justify-end">
-            <button type="submit" disabled={loading} className={`text-white font-bold py-4 px-10 rounded-lg shadow-md transition-all text-lg w-full md:w-auto uppercase ${loading ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}>
-              {loading ? 'Processando...' : idReprocessar ? 'Corrigir e Emitir' : 'Emitir NFS-e Completa'}
+        {/* SEÇÃO 3: VALORES */}
+        <div className={`bg-white rounded-3xl shadow-lg border-2 transition-all duration-500 overflow-hidden
+          ${activeTab === 'valores' ? 'border-idea-accent shadow-2xl' : 'border-gray-100 opacity-80'}`}>
+          
+          <div 
+            className="flex items-center gap-4 p-6 cursor-pointer"
+            onClick={() => setActiveTab('valores')}
+          >
+            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-xl font-black
+              ${activeTab === 'valores' ? 'bg-idea-accent text-white' : 'bg-idea-light text-idea-dark'}`}>
+              03
+            </div>
+            <div>
+              <h3 className="text-2xl font-black text-idea-dark">Valores e Tributos</h3>
+              <p className="text-gray-500 text-sm font-medium">Configuração financeira da nota</p>
+            </div>
+          </div>
+
+          {activeTab === 'valores' && (
+            <div className="p-6 pt-0 border-t border-gray-100">
+              {/* Cards de Valor Principal */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+                <div className="bg-gradient-to-br from-idea-dark to-idea-base rounded-2xl p-6 text-white">
+                  <label className="text-xs font-black text-idea-light/70 uppercase tracking-widest mb-2 block">
+                    Valor Total do Serviço *
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-0 top-1/2 -translate-y-1/2 text-3xl font-black text-idea-accent">R$</span>
+                    <input 
+                      type="text" 
+                      name="valorServico" 
+                      value={formData.valorServico} 
+                      onChange={handleChange} 
+                      required
+                      className="w-full pl-16 pr-6 py-4 bg-transparent border-b-2 border-white/20 text-5xl font-black outline-none focus:border-idea-accent transition-all text-white"
+                      placeholder="0,00"
+                    />
+                  </div>
+                </div>
+                
+                <div className="bg-idea-light/30 rounded-2xl p-6">
+                  <label className="text-xs font-black text-idea-dark uppercase tracking-widest mb-2 block">
+                    Alíquota ISS (%) *
+                  </label>
+                  <input 
+                    type="text" 
+                    name="aliquotaIss" 
+                    value={formData.aliquotaIss} 
+                    onChange={handleChange} 
+                    required
+                    className="w-full px-4 py-3 bg-white border-2 border-gray-200 rounded-xl text-2xl font-black outline-none focus:border-idea-accent"
+                    placeholder="0,00"
+                  />
+                  
+                  <div className="flex items-center gap-3 mt-4 p-3 bg-white rounded-xl">
+                    <input 
+                      type="checkbox" 
+                      name="reterIss" 
+                      checked={formData.reterIss} 
+                      onChange={handleChange} 
+                      className="w-5 h-5 rounded border-gray-300 text-idea-accent focus:ring-idea-accent" 
+                    />
+                    <label className="text-sm font-bold text-idea-dark cursor-pointer">ISS Retido na Fonte</label>
+                  </div>
+                </div>
+              </div>
+
+              {/* Grid de Tributos */}
+              <div className="mt-8">
+                <h4 className="text-lg font-black text-idea-dark mb-4">Outros Tributos e Deduções</h4>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <InputForm label="PIS" nome="pis" val={formData.pis} />
+                  <InputForm label="COFINS" nome="cofins" val={formData.cofins} />
+                  <InputForm label="INSS" nome="inss" val={formData.inss} />
+                  <InputForm label="IR" nome="ir" val={formData.ir} />
+                  <InputForm label="CSLL" nome="csll" val={formData.csll} />
+                  <InputForm label="Deduções" nome="deducoes" val={formData.deducoes} />
+                  <InputForm label="Desc. Incond." nome="descontoIncondicionado" val={formData.descontoIncondicionado} />
+                  <InputForm label="Desc. Cond." nome="descontoCondicionado" val={formData.descontoCondicionado} />
+                </div>
+              </div>
+              
+              <div className="flex justify-between mt-8">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('servico')}
+                  className="px-8 py-4 rounded-xl font-bold border-2 border-gray-200 hover:border-idea-accent transition-all flex items-center gap-2"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                  Voltar
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* BOTÃO FINALIZAR - SEMPRE VISÍVEL */}
+        <div className="sticky bottom-6 bg-white/80 backdrop-blur-lg rounded-2xl shadow-2xl border border-gray-200 p-4 mt-8">
+          <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+            <div className="flex items-center gap-3 text-gray-500 text-sm font-bold">
+              <span className="w-8 h-8 rounded-full bg-red-100 text-red-500 flex items-center justify-center text-xs">!</span>
+              Campos marcados com * são obrigatórios
+            </div>
+            <button 
+              type="submit" 
+              disabled={loading} 
+              className={`w-full md:w-auto px-16 py-5 rounded-xl font-black text-xl shadow-2xl transition-all transform flex items-center justify-center gap-3
+                ${loading 
+                  ? 'bg-gray-400 cursor-not-allowed' 
+                  : 'bg-gradient-to-r from-idea-accent to-idea-base text-white hover:shadow-2xl hover:scale-105'}`}
+            >
+              {loading ? (
+                <>
+                  <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Processando...
+                </>
+              ) : (
+                '🚀 Emitir Nota Fiscal Agora'
+              )}
             </button>
           </div>
-        </form>
-      </div>
+        </div>
+      </form>
     </div>
   );
 }

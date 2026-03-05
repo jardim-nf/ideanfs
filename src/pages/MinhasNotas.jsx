@@ -19,169 +19,151 @@ export default function MinhasNotas() {
     setNotas(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
   };
 
-  // 1. CHAMA O BACKEND PARA ATUALIZAR STATUS E PEGAR LINKS
+  // 1. SINCRONIZAR (MANTIDA LÓGICA)
   const handleSincronizar = async (idIntegracao) => {
     setLoadingId(idIntegracao);
     try {
       const urlBackend = "https://us-central1-ideanfe.cloudfunctions.net/consultarNotaPlugnotas";
       const response = await axios.post(urlBackend, { idIntegracao });
-      const { situacao, pdf } = response.data;
+      const { situacao } = response.data;
       
       if (situacao === 'SEM_ID') {
-        alert("⚠️ Essa nota é de um teste antigo e não pode ser sincronizada. Clique em 'Corrigir e Reenviar' para gerar uma nova com o ID correto.");
-      } else if (situacao === 'AUTORIZADA' && pdf) {
-        alert("✅ Nota Atualizada! Status: AUTORIZADA");
-      } else if (situacao === 'REJEITADA') {
-        alert("A nota foi rejeitada. Verifique os dados e tente corrigir.");
+        alert("⚠️ Nota antiga detectada. Reenvie para gerar novo ID.");
       } else {
-        alert(`Status atual: ${situacao}`);
+        alert(`Status atualizado: ${situacao}`);
       }
-      buscarNotas(); // Recarrega a tela
-    } catch (error) {
-      console.error("Erro ao sincronizar:", error);
-      alert("❌ Erro ao consultar a nota. Verifique os logs.");
-    } finally {
-      setLoadingId(null);
-    }
-  };
-
-  // 2. CHAMA O BACKEND PARA CANCELAR A NOTA
-  const handleCancelar = async (nota) => {
-    if (!nota.plugnotasId) {
-      alert("⚠️ Clique em 'Atualizar Status' primeiro para capturar o ID da nota.");
-      return;
-    }
-    const motivo = window.prompt("Qual o motivo do cancelamento?");
-    if (!motivo) return;
-
-    setLoadingId(nota.id + '-cancel');
-    try {
-      const urlBackend = "https://us-central1-ideanfe.cloudfunctions.net/cancelarNotaPlugnotas";
-      await axios.post(urlBackend, { 
-        idIntegracao: nota.id, 
-        plugnotasId: nota.plugnotasId,
-        motivo: motivo 
-      });
-      alert("✅ Solicitação de cancelamento enviada!");
       buscarNotas();
     } catch (error) {
-      console.error("Erro ao cancelar:", error);
-      alert("❌ Erro ao tentar cancelar a nota.");
+      alert("❌ Erro ao sincronizar.");
     } finally {
       setLoadingId(null);
     }
   };
 
-// 3. DOWNLOAD DIRETO DA PLUGNOTAS (ENVIANDO O TOKEN PELO FRONT)
-  const baixarDiretoDaApi = async (url, tipo) => {
-    setLoadingId(url);
+  // 2. DOWNLOAD COM CABEÇALHO (O que resolve o erro do Token)
+  const baixarDiretoDaApi = async (url, tipo, plugnotasId) => {
+    setLoadingId(`${plugnotasId}-${tipo}`);
     try {
       const response = await axios.get(url, {
-        headers: { "X-API-KEY": "7a1c5954ca39092ba5fd7b390755c5fa" }, // A sua chave entra aqui!
-        responseType: 'blob' // Diz para o Axios baixar como arquivo
+        headers: { "X-API-KEY": "7a1c5954ca39092ba5fd7b390755c5fa" },
+        responseType: 'blob'
       });
 
-      // Truque mágico do JavaScript para forçar o download na máquina
       const blobUrl = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
       link.href = blobUrl;
-      link.setAttribute('download', `Documento_Nota.${tipo}`);
+      link.setAttribute('download', `Nota_${plugnotasId}.${tipo}`);
       document.body.appendChild(link);
       link.click();
       link.parentNode.removeChild(link);
 
     } catch (error) {
-      console.error(`Erro ao baixar ${tipo}:`, error);
-      alert("❌ Erro ao baixar o arquivo da PlugNotas. Verifique se a nota já foi processada.");
+      alert("❌ Erro ao baixar arquivo.");
     } finally {
       setLoadingId(null);
     }
   };
 
   return (
-    <div className="p-8 bg-gray-100 min-h-screen">
-      <div className="flex justify-between items-center mb-6">
-        <h2 className="text-2xl font-bold">Histórico de Notas</h2>
+    <div className="animate-fade-in-up">
+      
+      {/* HEADER DA TELA */}
+      <div className="mb-8">
+        <h2 className="text-3xl font-black text-idea-dark tracking-tight">Histórico de Notas</h2>
+        <p className="text-idea-base/60 font-medium mt-1">Gerencie, baixe e monitore todas as suas NFS-e emitidas.</p>
       </div>
 
-      <div className="bg-white rounded-xl shadow overflow-hidden">
-        <table className="w-full text-left">
-          <thead className="bg-gray-50 border-b">
-            <tr>
-              <th className="p-4 text-xs font-bold uppercase text-gray-500">ID Integração</th>
-              <th className="p-4 text-xs font-bold uppercase text-gray-500">Cliente</th>
-              <th className="p-4 text-xs font-bold uppercase text-gray-500">Status</th>
-              <th className="p-4 text-xs font-bold uppercase text-center text-gray-500">Ações</th>
-            </tr>
-          </thead>
-          <tbody>
-            {notas.map(nota => {
-              const status = nota.status || 'PROCESSANDO';
-              const isAutorizada = status === 'CONCLUIDO' || status === 'AUTORIZADA';
-              const isRejeitada = status === 'ERRO' || status === 'REJEITADA';
-              const isProcessando = status === 'PROCESSANDO' || status === 'PROCESSAMENTO';
-              const isCancelando = status === 'CANCELAMENTO_SOLICITADO' || status === 'CANCELADA';
+      {/* TABELA ESTILIZADA */}
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead className="bg-idea-dark text-white">
+              <tr>
+                <th className="p-5 text-xs font-black uppercase tracking-widest">ID Integração</th>
+                <th className="p-5 text-xs font-black uppercase tracking-widest">Cliente / Tomador</th>
+                <th className="p-5 text-xs font-black uppercase tracking-widest">Status</th>
+                <th className="p-5 text-xs font-black uppercase tracking-widest text-center">Ações</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {notas.map(nota => {
+                const status = nota.status || 'PROCESSANDO';
+                const isAutorizada = status === 'CONCLUIDO' || status === 'AUTORIZADA';
+                const isRejeitada = status === 'ERRO' || status === 'REJEITADA';
 
-              return (
-                <tr key={nota.id} className="border-b hover:bg-gray-50">
-                  <td className="p-4 text-xs text-gray-500">{nota.id}</td>
-                  <td className="p-4 text-sm font-bold text-gray-800">{nota.dadosFormulario?.razaoSocialTomador || 'Desconhecido'}</td>
-                  
-                  <td className="p-4 text-xs font-bold uppercase">
-                    {isAutorizada && <span className="text-green-700 bg-green-100 px-2 py-1 rounded">AUTORIZADA</span>}
-                    {isRejeitada && <span className="text-red-700 bg-red-100 px-2 py-1 rounded">REJEITADA</span>}
-                    {isProcessando && <span className="text-yellow-700 bg-yellow-100 px-2 py-1 rounded">PROCESSANDO</span>}
-                    {isCancelando && <span className="text-gray-700 bg-gray-200 px-2 py-1 rounded">{status}</span>}
-                  </td>
-                  
-                  <td className="p-4 flex flex-wrap justify-center gap-2">
-{/* AÇÕES PARA NOTA AUTORIZADA */}
-{isAutorizada ? (
-  <>
-    <button 
-      onClick={() => nota.linkPdf ? baixarDiretoDaApi(nota.linkPdf, 'pdf') : handleSincronizar(nota.id)}
-      className="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded text-xs font-bold transition-all"
-    >
-      {loadingId === nota.linkPdf ? '⏳' : '📄 PDF'}
-    </button>
-    <button 
-      onClick={() => nota.linkXml ? baixarDiretoDaApi(nota.linkXml, 'xml') : handleSincronizar(nota.id)}
-      className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-1 rounded text-xs font-bold transition-all"
-    >
-      {loadingId === nota.linkXml ? '⏳' : '🧑‍💻 XML'}
-    </button>
-    <button 
-      onClick={() => handleCancelar(nota)}
-      className="bg-gray-800 hover:bg-black text-white px-3 py-1 rounded text-xs font-bold transition-all"
-    >
-      {loadingId === nota.id + '-cancel' ? '⏳' : '🚫 Cancelar'}
-    </button>
-  </>
-)
-                    /* AÇÕES PARA NOTA REJEITADA */
-                    : isRejeitada ? (
-                      <button 
-                        onClick={() => navigate(`/emitir-nota?reprocessar=${nota.id}`)}
-                        className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded text-xs font-bold transition-all"
-                      >
-                        Corrigir e Reenviar
-                      </button>
-                    ) 
-                    /* AÇÕES PARA PROCESSANDO OU CANCELANDO */
-                    : (
-                      <button 
-                        onClick={() => handleSincronizar(nota.id)}
-                        className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-xs font-bold transition-all shadow-sm"
-                      >
-                        {loadingId === nota.id ? 'Sincronizando...' : '🔄 Atualizar Status'}
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                return (
+                  <tr key={nota.id} className="hover:bg-idea-light/30 transition-colors group">
+                    <td className="p-5">
+                      <span className="text-xs font-mono text-idea-base/70 bg-gray-100 px-2 py-1 rounded">{nota.id}</span>
+                    </td>
+                    <td className="p-5">
+                      <p className="text-idea-dark font-black text-base">{nota.dadosFormulario?.razaoSocialTomador || '---'}</p>
+                      <p className="text-xs text-idea-base/50 font-bold">{nota.dadosFormulario?.cpfCnpjTomador}</p>
+                    </td>
+                    <td className="p-5">
+                      {isAutorizada && (
+                        <span className="inline-flex items-center gap-1.5 py-1.5 px-3 rounded-full text-xs font-black bg-green-100 text-green-700">
+                          <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span> AUTORIZADA
+                        </span>
+                      )}
+                      {isRejeitada && (
+                        <span className="inline-flex items-center gap-1.5 py-1.5 px-3 rounded-full text-xs font-black bg-red-100 text-red-700">
+                          ⚠️ REJEITADA
+                        </span>
+                      )}
+                      {!isAutorizada && !isRejeitada && (
+                        <span className="inline-flex items-center gap-1.5 py-1.5 px-3 rounded-full text-xs font-black bg-amber-100 text-amber-700">
+                          ⏳ {status}
+                        </span>
+                      )}
+                    </td>
+                    <td className="p-5">
+                      <div className="flex justify-center gap-2">
+                        {isAutorizada ? (
+                          <>
+                            <button 
+                              onClick={() => baixarDiretoDaApi(nota.linkPdf, 'pdf', nota.plugnotasId)}
+                              className="bg-idea-light text-idea-dark hover:bg-idea-accent hover:text-white p-2.5 rounded-xl transition-all shadow-sm flex items-center gap-2 font-bold text-xs"
+                            >
+                              {loadingId === `${nota.plugnotasId}-pdf` ? '...' : '📄 PDF'}
+                            </button>
+                            <button 
+                              onClick={() => baixarDiretoDaApi(nota.linkXml, 'xml', nota.plugnotasId)}
+                              className="bg-idea-light text-idea-dark hover:bg-idea-base hover:text-white p-2.5 rounded-xl transition-all shadow-sm flex items-center gap-2 font-bold text-xs"
+                            >
+                              {loadingId === `${nota.plugnotasId}-xml` ? '...' : '🧑‍💻 XML'}
+                            </button>
+                          </>
+                        ) : isRejeitada ? (
+                          <button 
+                            onClick={() => navigate(`/emitir-nota?reprocessar=${nota.id}`)}
+                            className="bg-red-600 text-white px-4 py-2 rounded-xl text-xs font-black hover:bg-red-700 shadow-md transition-all"
+                          >
+                            Corrigir e Reenviar
+                          </button>
+                        ) : (
+                          <button 
+                            onClick={() => handleSincronizar(nota.id)}
+                            className="bg-idea-accent text-white px-4 py-2 rounded-xl text-xs font-black hover:bg-idea-base shadow-md transition-all"
+                          >
+                            {loadingId === nota.id ? 'Sincronizando...' : '🔄 Atualizar Status'}
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {notas.length === 0 && (
+            <div className="p-20 text-center">
+              <span className="text-6xl block mb-4">📭</span>
+              <p className="text-idea-dark font-black text-xl">Nenhuma nota encontrada.</p>
+              <p className="text-gray-400">Suas emissões aparecerão aqui assim que você começar.</p>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
