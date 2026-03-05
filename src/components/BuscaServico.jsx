@@ -12,7 +12,7 @@ export default function BuscaServico({ valor, aoSelecionar }) {
   // Este efeito roda sempre que a "prop" valor mudar (ex: ao carregar nota antiga)
   useEffect(() => {
     if (valor) {
-      // Se o valor for apenas o código limpo (ex: 170601), tenta achar a descrição completa na lista
+      // Se o valor for apenas o código limpo (ex: 170601) ou com pontos, tenta achar a descrição completa na lista
       const servicoEncontrado = SERVICOS_LC116.find(
         (s) => s.codigo.replace(/\D/g, '') === valor.toString().replace(/\D/g, '')
       );
@@ -59,7 +59,8 @@ export default function BuscaServico({ valor, aoSelecionar }) {
     setTermo(servico.descricao); 
     setAberto(false);
     
-    // O Plugnotas precisa do código limpo (ex: 010401)
+    // ✨ AQUI ESTÁ A CORREÇÃO FINAL:
+    // O Plugnotas prefere o código limpo (sem os pontos, ex: 170201)
     const codigoLimpo = servico.codigo.replace(/\D/g, ''); 
     aoSelecionar(codigoLimpo); 
   };

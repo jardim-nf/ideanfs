@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
-import { useSearchParams, useNavigate } from 'react-router-dom'; // Adicionado useNavigate
+import { useSearchParams, useNavigate } from 'react-router-dom';
 // Importando o Banco de Dados
 import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebaseConfig';
@@ -24,7 +24,7 @@ const formatCep = (value) => value.replace(/\D/g, '').replace(/(\d{5})(\d)/, '$1
 export default function EmitirNota() {
   const [loading, setLoading] = useState(false);
   const [searchParams] = useSearchParams();
-  const navigate = useNavigate(); // Para navegar para o histórico após emitir
+  const navigate = useNavigate();
   const idReprocessar = searchParams.get('reprocessar'); 
   
   const [clientesSalvos, setClientesSalvos] = useState([]);
@@ -33,9 +33,34 @@ export default function EmitirNota() {
   const [formData, setFormData] = useState({
     cpfCnpjTomador: '', razaoSocialTomador: '', emailTomador: '', inscricaoMunicipalTomador: '',
     cepTomador: '', logradouroTomador: '', numeroTomador: '', bairroTomador: '', cidadeTomador: '', ufTomador: '',
+    codigoCidadeTomador: '', // CAMPO CRÍTICO PARA O PLUGNOTAS
     descricaoServico: '', codigoServico: '', valorServico: '', deducoes: '', descontoCondicionado: '', descontoIncondicionado: '',
     aliquotaIss: '', reterIss: false, pis: '', cofins: '', inss: '', ir: '', csll: '',
   });
+
+  // ✨ FUNÇÃO PARA BUSCAR CÓDIGO IBGE VIA CEP
+  const buscarEnderecoPorCEP = async (cep) => {
+    const cepLimpo = cep.replace(/\D/g, '');
+    if (cepLimpo.length !== 8) return;
+
+    try {
+      const response = await axios.get(`https://viacep.com.br/ws/${cepLimpo}/json/`);
+      const dados = response.data;
+
+      if (!dados.erro) {
+        setFormData(prev => ({
+          ...prev,
+          logradouroTomador: dados.logradouro,
+          bairroTomador: dados.bairro,
+          cidadeTomador: dados.localidade,
+          ufTomador: dados.uf,
+          codigoCidadeTomador: dados.ibge // Captura o código de 7 dígitos do IBGE
+        }));
+      }
+    } catch (error) {
+      console.error("Erro ao buscar CEP:", error);
+    }
+  };
 
   // 1. CARREGAR DADOS E NOTA ANTIGA
   useEffect(() => {
@@ -52,8 +77,11 @@ export default function EmitirNota() {
           
           if (docSnap.exists()) {
             const dadosHistoricos = docSnap.data().dadosFormulario;
-            // Preenche o formulário com os dados salvos no Firestore
             setFormData(dadosHistoricos);
+            // Se a nota histórica não tiver o código da cidade, tenta buscar pelo CEP dela
+            if (!dadosHistoricos.codigoCidadeTomador && dadosHistoricos.cepTomador) {
+                buscarEnderecoPorCEP(dadosHistoricos.cepTomador);
+            }
           }
         }
       } catch (error) {
@@ -63,7 +91,7 @@ export default function EmitirNota() {
     carregarDadosIniciais();
   }, [idReprocessar]);
 
-  // 2. HANDLERS (Ouvintes de mudança)
+  // 2. HANDLERS
   const handleChange = (e) => {
     let { name, value, type, checked } = e.target;
 
@@ -71,24 +99,18 @@ export default function EmitirNota() {
       value = formatCpfCnpj(value);
       const clienteEncontrado = clientesSalvos.find(c => c.cpfCnpj === value);
       if (clienteEncontrado) {
-        setFormData(prev => ({
-          ...prev,
-          cpfCnpjTomador: value,
-          razaoSocialTomador: clienteEncontrado.razaoSocial,
-          emailTomador: clienteEncontrado.email,
-          inscricaoMunicipalTomador: clienteEncontrado.inscricaoMunicipal || '',
-          cepTomador: clienteEncontrado.cep,
-          logradouroTomador: clienteEncontrado.logradouro,
-          numeroTomador: clienteEncontrado.numero,
-          bairroTomador: clienteEncontrado.bairro,
-          cidadeTomador: clienteEncontrado.cidade,
-          ufTomador: clienteEncontrado.uf,
-        }));
+        handleSelecionarClienteRapido(value);
         return;
       }
     }
 
-    if (name === 'cepTomador') value = formatCep(value);
+    if (name === 'cepTomador') {
+      value = formatCep(value);
+      if (value.replace(/\D/g, '').length === 8) {
+        buscarEnderecoPorCEP(value);
+      }
+    }
+
     if (['valorServico', 'deducoes', 'descontoCondicionado', 'descontoIncondicionado', 'pis', 'cofins', 'inss', 'ir', 'csll'].includes(name)) {
       value = formatCurrency(value);
     }
@@ -100,10 +122,17 @@ export default function EmitirNota() {
     const c = clientesSalvos.find(x => x.cpfCnpj === cpfCnpj);
     if (c) {
       setFormData(prev => ({
-        ...prev, cpfCnpjTomador: c.cpfCnpj, razaoSocialTomador: c.razaoSocial, emailTomador: c.email,
+        ...prev, 
+        cpfCnpjTomador: c.cpfCnpj, razaoSocialTomador: c.razaoSocial, emailTomador: c.email,
         inscricaoMunicipalTomador: c.inscricaoMunicipal || '', cepTomador: c.cep, logradouroTomador: c.logradouro,
         numeroTomador: c.numero, bairroTomador: c.bairro, cidadeTomador: c.cidade, ufTomador: c.uf,
+        codigoCidadeTomador: c.codigoIBGE || prev.codigoCidadeTomador // Puxa do cadastro ou mantém o atual
       }));
+
+      // Se o cliente não tem o código IBGE salvo no banco, dispara a busca pelo CEP
+      if (!c.codigoIBGE && c.cep) {
+        buscarEnderecoPorCEP(c.cep);
+      }
     }
   };
 
@@ -120,39 +149,83 @@ export default function EmitirNota() {
     }
   };
 
-  // 3. EMISSÃO FINAL
+// 3. EMISSÃO FINAL (Blindada contra erros de IBGE e Código de Serviço)
   const handleHomologar = async (e) => {
     e.preventDefault();
+if (!formData.logradouroTomador || formData.logradouroTomador.trim() === "") {
+    alert("⚠️ Erro: O campo Logradouro (Rua) é obrigatório. Por favor, preencha o endereço do cliente.");
+    return;
+  }
+    // --- 1. VALIDAÇÃO DO CÓDIGO DE SERVIÇO (Mínimo 6 dígitos sem máscara) ---
+    const codigoServicoLimpo = formData.codigoServico.replace(/\D/g, '');
+    
+    if (codigoServicoLimpo.length < 6) {
+      alert(`⚠️ Erro no Serviço: O código "${formData.codigoServico}" é inválido. \n\nPara o PlugNotas, o código de serviço deve ter pelo menos 6 dígitos numéricos (ex: 010101). Verifique o cadastro do serviço.`);
+      return;
+    }
+
+    // --- 2. VALIDAÇÃO DO CÓDIGO IBGE (Evita erro E0240 e RNG6110) ---
+    if (!formData.codigoCidadeTomador) {
+      alert("⚠️ Erro de Localização: O Código IBGE da cidade não foi detectado. \n\nPor favor, apague o último dígito do CEP e digite-o novamente para que o sistema capture o código oficial do IBGE automaticamente.");
+      return;
+    }
+
     setLoading(true);
 
     try {
-      const parseCurrency = (val) => Number(String(val).replace(/\./g, '').replace(',', '.')) || 0;
+      // Função auxiliar para converter "1.250,00" em 1250.00
+      const parseCurrency = (val) => {
+        if (!val) return 0;
+        return Number(String(val).replace(/\./g, '').replace(',', '.')) || 0;
+      };
 
+      // --- 3. LIMPEZA FINAL DOS DADOS PARA O BACKEND ---
       const dadosLimpos = {
         ...formData,
+        // Remove máscaras de documentos e localização
         cpfCnpjTomador: formData.cpfCnpjTomador.replace(/\D/g, ''),
         cepTomador: formData.cepTomador.replace(/\D/g, ''),
+        codigoServico: codigoServicoLimpo, // Enviando apenas os 6+ dígitos numéricos
+        
+        // Garante que valores numéricos cheguem como Number e não String
         valorServico: parseCurrency(formData.valorServico),
         deducoes: parseCurrency(formData.deducoes),
         descontoCondicionado: parseCurrency(formData.descontoCondicionado),
         descontoIncondicionado: parseCurrency(formData.descontoIncondicionado),
-        pis: parseCurrency(formData.pis), cofins: parseCurrency(formData.cofins),
-        inss: parseCurrency(formData.inss), ir: parseCurrency(formData.ir), csll: parseCurrency(formData.csll),
-        aliquotaIss: Number(formData.aliquotaIss)
+        pis: parseCurrency(formData.pis),
+        cofins: parseCurrency(formData.cofins),
+        inss: parseCurrency(formData.inss),
+        ir: parseCurrency(formData.ir),
+        csll: parseCurrency(formData.csll),
+        aliquotaIss: Number(formData.aliquotaIss) || 0
       };
       
+      console.log('🚀 Enviando para o PlugNotas:', dadosLimpos);
+      console.table({
+  "Prestador CNPJ": "52073286000139", // Seu CNPJ
+  "Tomador CPF": dadosLimpos.cpfCnpjTomador,
+  "CEP Tomador": dadosLimpos.cepTomador,
+  "IBGE Tomador": dadosLimpos.codigoCidadeTomador, // Deve ser 3300506
+  "Serviço": dadosLimpos.codigoServico
+});
+
       const urlBackend = "https://us-central1-ideanfe.cloudfunctions.net/emitirNotaPlugnotas";
       const response = await axios.post(urlBackend, dadosLimpos);
       
-      alert('Nota enviada para processamento!');
-      console.log('✅ SUCESSO:', response.data);
+      alert('✅ Nota enviada com sucesso para processamento!');
+      console.log('✅ Resposta da API:', response.data);
       
-      // Redireciona para o histórico após o sucesso
+      // Redireciona para o histórico
       navigate('/minhas-notas');
       
     } catch (error) {
-      console.error('❌ Erro na emissão:', error.response ? error.response.data : error);
-      alert('Erro ao emitir a nota. Verifique os dados e tente novamente.');
+      // Captura o erro detalhado que a API do PlugNotas retorna
+      const mensagemErro = error.response?.data?.erro?.message || 
+                          error.response?.data?.erro || 
+                          error.message;
+      
+      console.error('❌ Erro na emissão:', error.response?.data || error);
+      alert(`Erro ao emitir a nota: ${mensagemErro}`);
     } finally {
       setLoading(false);
     }
@@ -205,11 +278,19 @@ export default function EmitirNota() {
               </div>
 
               <div className="md:col-span-4 mt-2 grid grid-cols-1 md:grid-cols-6 gap-4">
-                <div><label className="block text-xs font-bold text-gray-700 uppercase mb-1">CEP</label><input type="text" name="cepTomador" value={formData.cepTomador} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
+                <div>
+                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">CEP</label>
+                    <input type="text" name="cepTomador" value={formData.cepTomador} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm font-bold border-blue-300" />
+                </div>
                 <div className="md:col-span-2"><label className="block text-xs font-bold text-gray-700 uppercase mb-1">Logradouro</label><input type="text" name="logradouroTomador" value={formData.logradouroTomador} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
                 <div><label className="block text-xs font-bold text-gray-700 uppercase mb-1">Número</label><input type="text" name="numeroTomador" value={formData.numeroTomador} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
                 <div><label className="block text-xs font-bold text-gray-700 uppercase mb-1">Bairro</label><input type="text" name="bairroTomador" value={formData.bairroTomador} onChange={handleChange} className="w-full px-3 py-2 border rounded text-sm" /></div>
                 <div><label className="block text-xs font-bold text-gray-700 uppercase mb-1">UF</label><input type="text" name="ufTomador" value={formData.ufTomador} onChange={handleChange} maxLength="2" className="w-full px-3 py-2 border rounded text-sm uppercase" /></div>
+              </div>
+              
+              {/* INDICADOR VISUAL DO IBGE (Opcional, mas ajuda muito no debug) */}
+              <div className="md:col-span-4 text-[10px] text-gray-400 italic">
+                {formData.codigoCidadeTomador ? `✅ Código IBGE detectado: ${formData.codigoCidadeTomador}` : '❌ Código IBGE não carregado. Verifique o CEP.'}
               </div>
             </div>
           </section>

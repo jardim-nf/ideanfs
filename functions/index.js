@@ -13,117 +13,97 @@ db.settings({ ignoreUndefinedProperties: true });
 // 🚨 SUA CHAVE DE PRODUÇÃO DO PLUGNOTAS
 const PLUGNOTAS_API_KEY = "7a1c5954ca39092ba5fd7b390755c5fa";
 
-// --- FUNÇÃO 1: EMITIR NOTA COMPLETA E SALVAR NO BANCO ---
+// 💡 CONTROLE DE AMBIENTE (Mude para false se quiser testar no Sandbox)
+const IS_PRODUCTION = true; 
+
+// --- FUNÇÃO 1: EMISSÃO DA NOTA ---
 exports.emitirNotaPlugnotas = functions.https.onRequest((req, res) => {
   cors(req, res, async () => {
-    if (req.method !== 'POST') {
-      return res.status(405).send('Método não permitido. Use POST.');
-    }
-
     try {
       const dadosFront = req.body;
-      const idIntegracao = `ideianfe-${Date.now()}`;
+      const idIntegracao = dadosFront.idIntegracao || `ideianfe-${Date.now()}`;
       
-      const payloadNFSe = [
-        {
-          "idIntegracao": idIntegracao, 
-          "prestador": {
-            "cpfCnpj": "52073286000139" // SEU CNPJ REAL (Fortaleza-CE)
-          },
-          "tomador": {
-            "cpfCnpj": dadosFront.cpfCnpjTomador,
-            "razaoSocial": dadosFront.razaoSocialTomador,
-            "email": dadosFront.emailTomador,
-            "inscricaoMunicipal": dadosFront.inscricaoMunicipalTomador || null,
-            "endereco": {
-              "cep": dadosFront.cepTomador,
-              "logradouro": dadosFront.logradouroTomador,
-              "numero": dadosFront.numeroTomador,
-              "bairro": dadosFront.bairroTomador,
-              "codigoCidade": "2304400", // CÓDIGO IBGE DE FORTALEZA-CE
-              "estado": dadosFront.ufTomador
-            }
-          },
-          "servico": {
-            "codigo": dadosFront.codigoServico, 
-            "discriminacao": dadosFront.descricaoServico,
-            "iss": {
-              "aliquota": dadosFront.aliquotaIss,
-              "retido": dadosFront.reterIss
-            },
-            "valor": {
-              "servico": dadosFront.valorServico,
-              "deducoes": dadosFront.deducoes,
-              "descontoCondicionado": dadosFront.descontoCondicionado,
-              "descontoIncondicionado": dadosFront.descontoIncondicionado
-            },
-            "retencao": {
-              "pis": { "valor": dadosFront.pis },
-              "cofins": { "valor": dadosFront.cofins },
-              "inss": { "valor": dadosFront.inss },
-              "irrf": { "valor": dadosFront.ir }, 
-              "csll": { "valor": dadosFront.csll }
-            }
+      const payloadNFSe = [{
+        "idIntegracao": idIntegracao,
+        "prestador": { "cpfCnpj": "52073286000139" }, 
+        "emitente": { "tipo": 1, "codigoCidade": "2304400" }, 
+        "tomador": {
+          "cpfCnpj": dadosFront.cpfCnpjTomador,
+          "razaoSocial": dadosFront.razaoSocialTomador,
+          "email": dadosFront.emailTomador,
+          "endereco": {
+            "codigoCidade": dadosFront.codigoCidadeTomador,
+            "cep": dadosFront.cepTomador,
+            "logradouro": dadosFront.logradouroTomador,
+            "numero": dadosFront.numeroTomador || "S/N",
+            "bairro": dadosFront.bairroTomador,
+            "estado": dadosFront.ufTomador,
+            "tipoLogradouro": "Rua"
           }
-        }
-      ];
+        },
+        "cidadePrestacao": { "codigo": "2304400" },
+        "servico": [{
+          "codigo": dadosFront.codigoServico, 
+          "codigoTributacao": "001",
+          "codigoCidadeIncidencia": "2304400",
+          "discriminacao": dadosFront.descricaoServico,
+          "iss": { 
+            "tipoTributacao": 6, 
+            "exigibilidade": 1, 
+            "aliquota": 0, 
+            "retido": false 
+          },
+          "valor": { "servico": dadosFront.valorServico || 0 }
+        }]
+      }];
 
-      // 1. Envia para o PlugNotas
+      console.log(`🚀 [ID: ${idIntegracao}] Enviando para PlugNotas (${IS_PRODUCTION ? 'PROD' : 'SANDBOX'})...`);
+
       const response = await axios.post(
-        "https://api.plugnotas.com.br/nfse",
+        `${BASE_URL}/nfse`,
         payloadNFSe,
-        {
-          headers: {
-            "x-api-key": PLUGNOTAS_API_KEY,
-            "Content-Type": "application/json"
-          }
-        }
+        { headers: { "X-API-KEY": PLUGNOTAS_API_KEY, "Content-Type": "application/json" } }
       );
 
-      // 2. Salva o Histórico no Firestore (Agora sem erro de undefined!)
-      await db.collection("notas_emitidas").doc(idIntegracao).set({
-        dadosFormulario: dadosFront,
-        protocoloPlugnotas: response.data.documents && response.data.documents.length > 0 ? response.data.documents[0].protocol : (response.data.protocol || ""),
-        status: "EM PROCESSAMENTO",
-        dataEmissao: admin.firestore.FieldValue.serverTimestamp()
-      });
+      const plugnotasId = response.data.documents[0].id;
 
-      // 3. Devolve sucesso pro site (React)
-      res.status(200).json({ sucesso: true, dados: response.data, idNota: idIntegracao });
-      
+      await db.collection("notas_emitidas").doc(idIntegracao).set({
+        id: idIntegracao,
+        plugnotasId: plugnotasId,
+        dadosFormulario: dadosFront,
+        status: "PROCESSANDO",
+        dataEmissao: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+
+      res.status(200).json({ sucesso: true, id: idIntegracao });
     } catch (error) {
-      console.error("Erro ao emitir:", error.response ? error.response.data : error.message);
-      res.status(500).json({ sucesso: false, erro: error.response ? error.response.data : error.message });
+      console.error("❌ Erro:", error.response?.data || error.message);
+      res.status(500).json({ sucesso: false, erro: error.response?.data || error.message });
     }
   });
 });
+
 
 // --- FUNÇÃO 2: CADASTRAR EMPRESA DE TESTE (SANDBOX) ---
 exports.cadastrarEmpresaTeste = functions.https.onRequest((req, res) => {
   cors(req, res, async () => {
     try {
-      const payloadEmpresa = {
-        "cpfCnpj": "01001001000113",
-        "razaoSocial": "EMPRESA DE TESTE IDEIANFE LTDA",
-        "nomeFantasia": "IDEIANFE TESTES",
-        "inscricaoMunicipal": "12345",
-        "endereco": {
-          "bairro": "Centro",
-          "cep": "87020025",
-          "codigoCidade": "4115200",
-          "estado": "PR",
-          "logradouro": "Rua de Teste",
-          "numero": "123",
-          "tipoLogradouro": "Rua"
+      const payloadEmpresa = [
+        {
+          "cpfCnpj": "52073286000139",
+          "razaoSocial": "Empresa Teste Sandbox",
+          "endereco": {
+            "codigoCidade": "2304400"
+          }
         }
-      };
+      ];
 
       const response = await axios.post(
-        "https://api.sandbox.plugnotas.com.br/empresas",
+        "https://api.sandbox.plugnotas.com.br/empresas", // Mantido fixo no sandbox como no original
         payloadEmpresa,
         {
           headers: {
-            "x-api-key": "2da392a6-79d2-4304-a8b7-959572c7e44d",
+            "X-API-KEY": PLUGNOTAS_API_KEY, // Variável padronizada
             "Content-Type": "application/json"
           }
         }
@@ -136,6 +116,7 @@ exports.cadastrarEmpresaTeste = functions.https.onRequest((req, res) => {
     }
   });
 });
+
 
 // --- FUNÇÃO 3: CADASTRAR A EMPRESA REAL DO SEU CLIENTE (PRODUÇÃO) ---
 exports.configurarMinhaEmpresa = functions.https.onRequest((req, res) => {
@@ -150,7 +131,7 @@ exports.configurarMinhaEmpresa = functions.https.onRequest((req, res) => {
 
       let idCertificadoPlugnotas = "";
       if (tipoCertificado === 'mei') {
-        idCertificadoPlugnotas = "ID_DO_SEU_CERTIFICADO_A1_NO_PLUGNOTAS"; 
+        idCertificadoPlugnotas = "ID_DO_SEU_CERTIFICADO_A1_NO_PLUGNOTAS";
       } else {
         idCertificadoPlugnotas = "ID_TEMPORARIO_ATE_CRIAR_UPLOAD";
       }
@@ -168,10 +149,10 @@ exports.configurarMinhaEmpresa = functions.https.onRequest((req, res) => {
             logradouro: dadosEmpresa.logradouro,
             numero: dadosEmpresa.numero,
             bairro: dadosEmpresa.bairro,
-            codigoCidade: "2304400", 
+            codigoCidade: "2304400",
             descricaoCidade: dadosEmpresa.cidade,
             estado: dadosEmpresa.uf,
-            codigoPais: "1058", 
+            codigoPais: "1058",
             descricaoPais: "Brasil"
           },
           nfse: {
@@ -182,11 +163,11 @@ exports.configurarMinhaEmpresa = functions.https.onRequest((req, res) => {
       ];
 
       const response = await axios.post(
-        "https://api.plugnotas.com.br/empresa", 
+        `${BASE_URL}/empresa`,
         payloadPlugnotas,
         {
           headers: {
-            "x-api-key": PLUGNOTAS_API_KEY,
+            "X-API-KEY": PLUGNOTAS_API_KEY,
             "Content-Type": "application/json"
           }
         }
@@ -201,10 +182,130 @@ exports.configurarMinhaEmpresa = functions.https.onRequest((req, res) => {
         dataCadastro: admin.firestore.FieldValue.serverTimestamp()
       });
 
-      res.status(200).json({ sucesso: true, mensagem: "Configurada com sucesso em Produção!", dadosPlugnotas: response.data });
+      res.status(200).json({ sucesso: true, mensagem: "Configurada com sucesso!", dadosPlugnotas: response.data });
     } catch (error) {
       console.error("Erro na API Empresa:", error.response ? error.response.data : error.message);
       res.status(500).json({ sucesso: false, erro: error.response ? error.response.data : error.message });
+    }
+  });
+});
+
+
+// --- FUNÇÃO 4: CONSULTAR STATUS, PDF e XML DA NOTA ---
+exports.consultarNotaPlugnotas = functions.https.onRequest((req, res) => {
+  cors(req, res, async () => {
+    try {
+      const { idIntegracao } = req.body;
+      if (!idIntegracao) return res.status(400).json({ sucesso: false, erro: "ID não informado." });
+
+      const docSnap = await db.collection("notas_emitidas").doc(idIntegracao).get();
+      const notaSalva = docSnap.data();
+
+      if (!notaSalva || !notaSalva.plugnotasId) {
+        return res.status(200).json({ 
+          sucesso: false, 
+          situacao: "SEM_ID", 
+          erro: "Esta nota não possui ID de sincronização." 
+        });
+      }
+
+      const response = await axios.get(
+        `${BASE_URL}/nfse/${notaSalva.plugnotasId}`,
+        { headers: { "X-API-KEY": PLUGNOTAS_API_KEY } }
+      );
+
+      const notaPlugnotas = Array.isArray(response.data) ? response.data[0] : response.data;
+      const statusNovo = notaPlugnotas.situacao;
+
+      await db.collection("notas_emitidas").doc(idIntegracao).set({
+        status: statusNovo,
+        linkPdf: notaPlugnotas.pdf || null,
+        linkXml: notaPlugnotas.xml || null,
+        dataAtualizacao: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+
+      res.status(200).json({ 
+        sucesso: true, 
+        situacao: statusNovo,
+        pdf: notaPlugnotas.pdf,
+        xml: notaPlugnotas.xml
+      });
+    } catch (error) {
+      console.error("❌ Erro ao consultar:", error.response?.data || error.message);
+      res.status(500).json({ sucesso: false, erro: error.response?.data || error.message });
+    }
+  });
+});
+
+
+// --- FUNÇÃO 5: WEBHOOK DO PLUGNOTAS (ATUALIZAÇÃO AUTOMÁTICA) ---
+exports.webhookPlugnotas = functions.https.onRequest((req, res) => {
+  cors(req, res, async () => {
+    if (req.method !== 'POST') {
+      return res.status(405).send('Apenas POST permitido.');
+    }
+
+    try {
+      const dadosWebhook = req.body;
+      console.log("🔔 Webhook Recebido:", JSON.stringify(dadosWebhook));
+
+      const idIntegracao = dadosWebhook.idIntegracao;
+
+      if (!idIntegracao) {
+        console.error("❌ Webhook ignorado: idIntegracao ausente.");
+        return res.status(400).send("Faltando idIntegracao.");
+      }
+
+      const statusNovo = dadosWebhook.situacao; 
+      const linkPdf = dadosWebhook.pdf || null;
+      const linkXml = dadosWebhook.xml || null;
+      const mensagemErro = dadosWebhook.mensagemRetorno || null;
+
+      await db.collection("notas_emitidas").doc(idIntegracao).set({
+        status: statusNovo,
+        linkPdf: linkPdf,
+        linkXml: linkXml,
+        erroRejeicao: mensagemErro,
+        dataAtualizacaoWebhook: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+
+      console.log(`✅ Firebase Atualizado! Nota [${idIntegracao}] mudou para: ${statusNovo}`);
+
+      res.status(200).send("Webhook recebido e processado!");
+
+    } catch (error) {
+      console.error("❌ Erro interno no Webhook:", error);
+      res.status(500).send("Erro interno ao processar o Webhook.");
+    }
+  });
+});
+
+
+// --- FUNÇÃO 6: CANCELAR A NOTA ---
+exports.cancelarNotaPlugnotas = functions.https.onRequest((req, res) => {
+  cors(req, res, async () => {
+    try {
+      const { plugnotasId, idIntegracao, motivo } = req.body;
+      
+      if (!plugnotasId) return res.status(400).json({ sucesso: false, erro: "ID da PlugNotas ausente. Sincronize a nota primeiro." });
+
+      console.log(`🗑️ Cancelando nota PlugNotas ID: ${plugnotasId}`);
+
+      const response = await axios.post(
+        `${BASE_URL}/nfse/cancelar/${plugnotasId}`,
+        { codigo: "1", motivo: motivo || "Cancelamento solicitado pelo emissor" },
+        { headers: { "X-API-KEY": PLUGNOTAS_API_KEY, "Content-Type": "application/json" } }
+      );
+
+      await db.collection("notas_emitidas").doc(idIntegracao).set({
+        status: "CANCELAMENTO_SOLICITADO",
+        dataCancelamento: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+
+      res.status(200).json({ sucesso: true, mensagem: "Cancelamento em processamento!" });
+    } catch (error) {
+      console.error("❌ Erro ao cancelar:", error.response?.data || error.message);
+      res.status(500).json({ sucesso: false, erro: error.response?.data || error.message });
     }
   });
 });
