@@ -309,3 +309,50 @@ exports.cancelarNotaPlugnotas = functions.https.onRequest((req, res) => {
     }
   });
 });
+
+// --- NOVA FUNÇÃO: BAIXAR PDF OU XML DIRETO EM BYTES ---
+exports.baixarArquivoPlugnotas = functions.https.onRequest((req, res) => {
+  cors(req, res, async () => {
+    
+    // 🔥 CORREÇÃO: Declarando as variáveis FORA do try para o catch enxergar!
+    const plugnotasId = req.body.plugnotasId;
+    const tipo = req.body.tipo; 
+
+    try {
+      if (!plugnotasId || !tipo) {
+        return res.status(400).json({ erro: "Envie o plugnotasId e o tipo (pdf ou xml)" });
+      }
+
+      console.log(`📥 Iniciando download do ${tipo.toUpperCase()} para ID: ${plugnotasId}`);
+
+      const response = await axios.get(
+        `${BASE_URL}/nfse/${tipo}/${plugnotasId}`, 
+        { 
+          headers: { "X-API-KEY": PLUGNOTAS_API_KEY },
+          responseType: "arraybuffer" 
+        }
+      );
+
+      const arquivoBase64 = Buffer.from(response.data, 'binary').toString('base64');
+      const contentType = response.headers['content-type']; 
+
+      res.status(200).json({ 
+        sucesso: true, 
+        arquivoBase64: arquivoBase64,
+        contentType: contentType,
+        mensagem: `${tipo.toUpperCase()} convertido com sucesso!`
+      });
+
+    } catch (error) {
+      let erroMensagem = "Erro desconhecido ao baixar arquivo";
+      if (error.response && error.response.data) {
+        // Traduz os bytes do erro de volta para texto para a gente ler
+        erroMensagem = Buffer.from(error.response.data).toString('utf-8');
+      }
+      
+      // Agora o 'tipo' existe aqui e não vai mais dar crash!
+      console.error(`❌ Erro no download do ${tipo || 'arquivo'}:`, erroMensagem);
+      res.status(500).json({ sucesso: false, erro: erroMensagem });
+    }
+  });
+});

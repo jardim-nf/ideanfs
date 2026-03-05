@@ -27,7 +27,9 @@ export default function MinhasNotas() {
       const response = await axios.post(urlBackend, { idIntegracao });
       const { situacao, pdf } = response.data;
       
-      if (situacao === 'AUTORIZADA' && pdf) {
+      if (situacao === 'SEM_ID') {
+        alert("⚠️ Essa nota é de um teste antigo e não pode ser sincronizada. Clique em 'Corrigir e Reenviar' para gerar uma nova com o ID correto.");
+      } else if (situacao === 'AUTORIZADA' && pdf) {
         alert("✅ Nota Atualizada! Status: AUTORIZADA");
       } else if (situacao === 'REJEITADA') {
         alert("A nota foi rejeitada. Verifique os dados e tente corrigir.");
@@ -41,15 +43,6 @@ export default function MinhasNotas() {
     } finally {
       setLoadingId(null);
     }
-    if (situacao === 'SEM_ID') {
-        alert("⚠️ Essa nota é de um teste antigo e não pode ser sincronizada. Clique em 'Corrigir e Reenviar' para gerar uma nova com o ID correto.");
-      } else if (situacao === 'AUTORIZADA' && pdf) {
-        alert("✅ Nota Atualizada! Status: AUTORIZADA");
-      } else if (situacao === 'REJEITADA') {
-        alert("A nota foi rejeitada. Verifique os dados e tente corrigir.");
-      } else {
-        alert(`Status atual: ${situacao}`);
-      }
   };
 
   // 2. CHAMA O BACKEND PARA CANCELAR A NOTA
@@ -74,6 +67,32 @@ export default function MinhasNotas() {
     } catch (error) {
       console.error("Erro ao cancelar:", error);
       alert("❌ Erro ao tentar cancelar a nota.");
+    } finally {
+      setLoadingId(null);
+    }
+  };
+
+// 3. DOWNLOAD DIRETO DA PLUGNOTAS (ENVIANDO O TOKEN PELO FRONT)
+  const baixarDiretoDaApi = async (url, tipo) => {
+    setLoadingId(url);
+    try {
+      const response = await axios.get(url, {
+        headers: { "X-API-KEY": "7a1c5954ca39092ba5fd7b390755c5fa" }, // A sua chave entra aqui!
+        responseType: 'blob' // Diz para o Axios baixar como arquivo
+      });
+
+      // Truque mágico do JavaScript para forçar o download na máquina
+      const blobUrl = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.setAttribute('download', `Documento_Nota.${tipo}`);
+      document.body.appendChild(link);
+      link.click();
+      link.parentNode.removeChild(link);
+
+    } catch (error) {
+      console.error(`Erro ao baixar ${tipo}:`, error);
+      alert("❌ Erro ao baixar o arquivo da PlugNotas. Verifique se a nota já foi processada.");
     } finally {
       setLoadingId(null);
     }
@@ -116,29 +135,29 @@ export default function MinhasNotas() {
                   </td>
                   
                   <td className="p-4 flex flex-wrap justify-center gap-2">
-                    {/* AÇÕES PARA NOTA AUTORIZADA */}
-                    {isAutorizada ? (
-                      <>
-                        <button 
-                          onClick={() => nota.linkPdf ? window.open(nota.linkPdf, '_blank') : handleSincronizar(nota.id)}
-                          className="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded text-xs font-bold transition-all"
-                        >
-                          {loadingId === nota.id ? '⏳' : '📄 PDF'}
-                        </button>
-                        <button 
-                          onClick={() => nota.linkXml ? window.open(nota.linkXml, '_blank') : handleSincronizar(nota.id)}
-                          className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-1 rounded text-xs font-bold transition-all"
-                        >
-                          {loadingId === nota.id ? '⏳' : '🧑‍💻 XML'}
-                        </button>
-                        <button 
-                          onClick={() => handleCancelar(nota)}
-                          className="bg-gray-800 hover:bg-black text-white px-3 py-1 rounded text-xs font-bold transition-all"
-                        >
-                          {loadingId === nota.id + '-cancel' ? '⏳' : '🚫 Cancelar'}
-                        </button>
-                      </>
-                    ) 
+{/* AÇÕES PARA NOTA AUTORIZADA */}
+{isAutorizada ? (
+  <>
+    <button 
+      onClick={() => nota.linkPdf ? baixarDiretoDaApi(nota.linkPdf, 'pdf') : handleSincronizar(nota.id)}
+      className="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded text-xs font-bold transition-all"
+    >
+      {loadingId === nota.linkPdf ? '⏳' : '📄 PDF'}
+    </button>
+    <button 
+      onClick={() => nota.linkXml ? baixarDiretoDaApi(nota.linkXml, 'xml') : handleSincronizar(nota.id)}
+      className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-1 rounded text-xs font-bold transition-all"
+    >
+      {loadingId === nota.linkXml ? '⏳' : '🧑‍💻 XML'}
+    </button>
+    <button 
+      onClick={() => handleCancelar(nota)}
+      className="bg-gray-800 hover:bg-black text-white px-3 py-1 rounded text-xs font-bold transition-all"
+    >
+      {loadingId === nota.id + '-cancel' ? '⏳' : '🚫 Cancelar'}
+    </button>
+  </>
+)
                     /* AÇÕES PARA NOTA REJEITADA */
                     : isRejeitada ? (
                       <button 
